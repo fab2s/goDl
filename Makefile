@@ -6,7 +6,7 @@
 COMPOSE = docker compose
 RUN     = $(COMPOSE) run --rm dev
 
-.PHONY: build test test-cpu test-v shell clean image
+.PHONY: build test test-cpu test-race lint shell clean image env
 
 # Build the Docker image
 image:
@@ -31,6 +31,10 @@ shell: image
 # Go vet
 vet: image
 	$(RUN) go vet -tags cuda ./...
+
+# Lint with golangci-lint
+lint: image
+	$(RUN) golangci-lint run ./...
 
 # Clean up containers and volumes
 clean:

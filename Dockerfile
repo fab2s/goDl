@@ -59,4 +59,13 @@ ENV CGO_ENABLED=1
 # Build tag for backend selection — Go source links CUDA libs only with -tags cuda
 ENV GOFLAGS="-tags=cuda"
 
+# --- Layer 6: golangci-lint (changes on version bump) ---
+ARG GOLANGCI_LINT_VERSION=v2.1.6
+RUN wget -q -O- https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b /usr/local/bin ${GOLANGCI_LINT_VERSION}
+
+# Suppress NVIDIA license banner on every container run.
+# The license is accepted by using the image.
+ENV NVIDIA_PRODUCT_NAME=""
+ENTRYPOINT []
+
 WORKDIR /workspace

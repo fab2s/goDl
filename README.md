@@ -33,7 +33,7 @@ it breaks on data-dependent control flow and requires recompilation when loop
 counts or branch structure change — exactly the dynamic architectures that
 need help most.
 
-See [docs/cuda-dispatch.md](docs/cuda-dispatch.md) for the full analysis.
+See [docs/design/cuda-dispatch.md](docs/design/cuda-dispatch.md) for the full analysis.
 
 ### Why not C++?
 
@@ -108,7 +108,7 @@ See the [Makefile](Makefile) for all available commands.
 
 ## Status
 
-Early development. See [docs/roadmap.md](docs/roadmap.md) for the full plan.
+Early development. See [docs/design/roadmap.md](docs/design/roadmap.md) for the full plan.
 
 Currently developed and tested on a GTX 1060 6GB (Pascal, SM 6.1) — the
 minimum NVIDIA GPU that supports CUDA compute capability 6.x. If this runs
@@ -119,10 +119,12 @@ If anyone feels like donating a modern GPU to the cause, the latent space would 
 
 ## Documentation
 
-- [Roadmap](docs/roadmap.md) — phased development plan with interface sketches
-- [CUDA Dispatch Analysis](docs/cuda-dispatch.md) — detailed overhead breakdown
-  and performance thesis
-- [Bootstrap](docs/bootstrap.md) — origin story and research context
+### Design
+- [Roadmap](docs/design/roadmap.md) — phased development plan with interface sketches
+- [CUDA Dispatch Analysis](docs/design/cuda-dispatch.md) — detailed overhead breakdown and performance thesis
+
+### Origin
+- [Bootstrap](docs/origin/bootstrap.md) — research context and motivation
 
 ## License
 
