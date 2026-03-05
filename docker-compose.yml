@@ -1,0 +1,25 @@
+services:
+  dev:
+    build: .
+    image: godl-dev
+    volumes:
+      - .:/workspace
+      # Cache Go modules and build cache between runs
+      - go-mod-cache:/root/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    working_dir: /workspace
+    # GPU access
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Keep container alive for interactive use with `docker compose exec`
+    stdin_open: true
+    tty: true
+
+volumes:
+  go-mod-cache:
+  go-build-cache:

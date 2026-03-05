@@ -1,0 +1,320 @@
+// Package libtorch provides raw CGo bindings to libtorch via a C shim.
+//
+// This is the lowest level of goDl — it exposes C tensor handles and
+// operations directly. Higher-level packages (tensor/, autograd/) wrap
+// these with safe Go types.
+//
+// Every function that can fail returns an error. Errors originate from
+// libtorch C++ exceptions caught in the shim layer.
+package libtorch
+
+// CGo preamble: tell the Go compiler how to build and link the C++ shim.
+//
+// The shim.cpp file is compiled by CGo as C++ (via the .cpp extension).
+// CGo automatically compiles .c/.cpp files in the same directory.
+//
+// Base LDFLAGS link against core libtorch libraries. Backend-specific
+// libraries (CUDA, ROCm) are added via build tags in separate files:
+//   - libtorch_cuda.go  — adds -ltorch_cuda -lc10_cuda
+//   - libtorch_cpu.go   — CPU-only, no extra libs
+//
+// The LIBTORCH_PATH environment variable must point to the libtorch
+// installation. The Dockerfile sets this automatically.
+
+/*
+#cgo CXXFLAGS: -std=c++17 -D_GLIBCXX_USE_CXX11_ABI=1
+#cgo LDFLAGS: -lstdc++ -ltorch -ltorch_cpu -lc10
+#include "shim.h"
+#include <stdlib.h>
+*/
+import "C"
+import (
+	"fmt"
+	"unsafe"
+)
+
+// DType represents a tensor's element type.
+type DType int
+
+const (
+	Float32 DType = C.GODL_FLOAT32
+	Float64 DType = C.GODL_FLOAT64
+	Int32   DType = C.GODL_INT32
+	Int64   DType = C.GODL_INT64
+)
+
+// Device represents where a tensor lives (CPU or CUDA).
+type Device int
+
+const (
+	CPU  Device = C.GODL_CPU
+	CUDA Device = C.GODL_CUDA
+)
+
+// Tensor is an opaque handle to a libtorch tensor.
+// It must be freed with Free() when no longer needed.
+type Tensor struct {
+	handle C.TorchTensor
+}
+
+// checkErr converts a C error string to a Go error, freeing the C string.
+// Returns nil if the C string is NULL (success).
+func checkErr(cerr *C.char) error {
+	if cerr == nil {
+		return nil
+	}
+	msg := C.GoString(cerr)
+	C.godl_free_string(cerr)
+	return fmt.Errorf("libtorch: %s", msg)
+}
+
+// --- Tensor creation ---
+
+// Zeros creates a tensor filled with zeros.
+func Zeros(shape []int64, dtype DType, device Device) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_zeros(
+		(*C.int64_t)(unsafe.Pointer(&shape[0])),
+		C.int(len(shape)),
+		C.int(dtype),
+		C.int(device),
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Ones creates a tensor filled with ones.
+func Ones(shape []int64, dtype DType, device Device) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_ones(
+		(*C.int64_t)(unsafe.Pointer(&shape[0])),
+		C.int(len(shape)),
+		C.int(dtype),
+		C.int(device),
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Rand creates a tensor filled with uniform random values in [0, 1).
+func Rand(shape []int64, dtype DType, device Device) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_rand(
+		(*C.int64_t)(unsafe.Pointer(&shape[0])),
+		C.int(len(shape)),
+		C.int(dtype),
+		C.int(device),
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// FromFloat32 creates a tensor from a Go float32 slice.
+// The data is copied — the Go slice can be modified or GC'd after this call.
+func FromFloat32(data []float32, shape []int64, device Device) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_from_blob(
+		unsafe.Pointer(&data[0]),
+		(*C.int64_t)(unsafe.Pointer(&shape[0])),
+		C.int(len(shape)),
+		C.int(Float32),
+		C.int(device),
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// FromFloat64 creates a tensor from a Go float64 slice.
+func FromFloat64(data []float64, shape []int64, device Device) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_from_blob(
+		unsafe.Pointer(&data[0]),
+		(*C.int64_t)(unsafe.Pointer(&shape[0])),
+		C.int(len(shape)),
+		C.int(Float64),
+		C.int(device),
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// --- Tensor lifecycle ---
+
+// Free releases the underlying libtorch tensor. Must be called exactly once.
+func (t *Tensor) Free() {
+	if t.handle != nil {
+		C.godl_free_tensor(t.handle)
+		t.handle = nil
+	}
+}
+
+// --- Tensor metadata ---
+
+// Ndim returns the number of dimensions.
+func (t *Tensor) Ndim() int {
+	return int(C.godl_ndim(t.handle))
+}
+
+// Shape returns the size of the given dimension.
+func (t *Tensor) Shape(dim int) int64 {
+	return int64(C.godl_shape(t.handle, C.int(dim)))
+}
+
+// Shapes returns the full shape as a slice.
+func (t *Tensor) Shapes() []int64 {
+	ndim := t.Ndim()
+	shape := make([]int64, ndim)
+	for i := 0; i < ndim; i++ {
+		shape[i] = t.Shape(i)
+	}
+	return shape
+}
+
+// DType returns the tensor's element type.
+func (t *Tensor) DType() DType {
+	return DType(C.godl_dtype(t.handle))
+}
+
+// Device returns which device the tensor lives on.
+func (t *Tensor) Device() Device {
+	return Device(C.godl_device(t.handle))
+}
+
+// Numel returns the total number of elements.
+func (t *Tensor) Numel() int64 {
+	return int64(C.godl_numel(t.handle))
+}
+
+// --- Data access ---
+
+// Float32Data copies the tensor data into a Go float32 slice.
+// The tensor is moved to CPU if necessary.
+func (t *Tensor) Float32Data() ([]float32, error) {
+	n := t.Numel()
+	buf := make([]float32, n)
+	cerr := C.godl_copy_data(
+		t.handle,
+		unsafe.Pointer(&buf[0]),
+		C.int64_t(n*4), // 4 bytes per float32
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
+// Float64Data copies the tensor data into a Go float64 slice.
+func (t *Tensor) Float64Data() ([]float64, error) {
+	n := t.Numel()
+	buf := make([]float64, n)
+	cerr := C.godl_copy_data(
+		t.handle,
+		unsafe.Pointer(&buf[0]),
+		C.int64_t(n*8), // 8 bytes per float64
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
+// --- Basic operations ---
+
+// Add returns a + b (element-wise).
+func Add(a, b *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_add(a.handle, b.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Mul returns a * b (element-wise).
+func Mul(a, b *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_mul(a.handle, b.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Matmul returns the matrix product of a and b.
+func Matmul(a, b *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_matmul(a.handle, b.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// ReLU applies rectified linear unit activation.
+func ReLU(a *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_relu(a.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Sigmoid applies the sigmoid activation function.
+func Sigmoid(a *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_sigmoid(a.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Tanh applies the hyperbolic tangent activation function.
+func Tanh(a *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_tanh_op(a.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// --- Device operations ---
+
+// ToDevice moves a tensor to the specified device. Returns a new tensor.
+func (t *Tensor) ToDevice(device Device) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_to_device(t.handle, C.int(device), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// --- Utility ---
+
+// CUDAAvailable returns true if CUDA is available.
+func CUDAAvailable() bool {
+	return C.godl_cuda_is_available() != 0
+}
+
+// CUDADeviceCount returns the number of available CUDA devices.
+func CUDADeviceCount() int {
+	return int(C.godl_cuda_device_count())
+}
