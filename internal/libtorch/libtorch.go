@@ -153,6 +153,23 @@ func FromFloat64(data []float64, shape []int64, device Device) (*Tensor, error) 
 	return &Tensor{handle: handle}, nil
 }
 
+// FromInt64 creates a tensor from a Go int64 slice.
+func FromInt64(data []int64, shape []int64, device Device) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_from_blob(
+		unsafe.Pointer(&data[0]),
+		(*C.int64_t)(unsafe.Pointer(&shape[0])),
+		C.int(len(shape)),
+		C.int(Int64),
+		C.int(device),
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
 // --- Tensor lifecycle ---
 
 // Free releases the underlying libtorch tensor. Must be called exactly once.
@@ -454,6 +471,190 @@ func MaxDim(t *Tensor, dim int, keepdim bool) (*Tensor, error) {
 		return nil, err
 	}
 	return &Tensor{handle: handle}, nil
+}
+
+// Softmax applies softmax along a dimension.
+func Softmax(t *Tensor, dim int) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_softmax(t.handle, C.int(dim), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Select picks a single index along a dimension, removing that dimension.
+func Select(t *Tensor, dim int, index int64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_select(t.handle, C.int(dim), C.int64_t(index), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// ZerosLike creates a tensor of zeros with the same shape, dtype, and device.
+func ZerosLike(t *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_zeros_like(t.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// SelectScatter returns a copy of input with the slice at (dim, index) replaced by src.
+func SelectScatter(input, src *Tensor, dim int, index int64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_select_scatter(input.handle, src.handle, C.int(dim), C.int64_t(index), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// --- Slicing and concatenation ---
+
+// Narrow extracts a slice along dim starting at start with the given length.
+func Narrow(t *Tensor, dim int, start, length int64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_narrow(t.handle, C.int(dim), C.int64_t(start), C.int64_t(length), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// NarrowScatter returns input with the narrow slice at (dim, start) replaced by src.
+func NarrowScatter(input, src *Tensor, dim int, start int64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_narrow_scatter(input.handle, src.handle, C.int(dim), C.int64_t(start), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Cat2 concatenates two tensors along dim.
+func Cat2(a, b *Tensor, dim int) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_cat2(a.handle, b.handle, C.int(dim), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// --- Reduction ---
+
+// MeanDim computes the mean along a single dimension.
+func MeanDim(t *Tensor, dim int, keepdim bool) (*Tensor, error) {
+	var handle C.TorchTensor
+	kd := C.int(0)
+	if keepdim {
+		kd = 1
+	}
+	cerr := C.godl_mean_dim(t.handle, C.int(dim), kd, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// --- Indexing ---
+
+// IndexSelect gathers slices along dim at the given indices.
+func IndexSelect(t *Tensor, dim int, index *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_index_select(t.handle, C.int(dim), index.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// IndexAdd returns t with src added at positions given by index along dim.
+func IndexAdd(t *Tensor, dim int, index *Tensor, src *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_index_add(t.handle, C.int(dim), index.handle, src.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// --- Element-wise math ---
+
+// Sqrt returns element-wise square root.
+func Sqrt(t *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_sqrt(t.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Div returns a / b (element-wise).
+func Div(a, b *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_div(a.handle, b.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// --- Convolution ---
+
+// Conv2d performs a 2D convolution. bias may be nil.
+// stride, padding, dilation must each be 2-element slices.
+func Conv2d(input, weight, bias *Tensor, stride, padding, dilation []int64, groups int64) (*Tensor, error) {
+	var biasHandle C.TorchTensor
+	if bias != nil {
+		biasHandle = bias.handle
+	}
+	var handle C.TorchTensor
+	cerr := C.godl_conv2d(
+		input.handle, weight.handle, biasHandle,
+		(*C.int64_t)(unsafe.Pointer(&stride[0])),
+		(*C.int64_t)(unsafe.Pointer(&padding[0])),
+		(*C.int64_t)(unsafe.Pointer(&dilation[0])),
+		C.int64_t(groups),
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Conv2dBackward computes gradients for a 2D convolution.
+// Always returns gradInput and gradWeight. Returns gradBias only if computeBias is true.
+func Conv2dBackward(gradOutput, input, weight *Tensor, stride, padding, dilation []int64, groups int64, computeBias bool) (gradInput, gradWeight, gradBias *Tensor, err error) {
+	var giHandle, gwHandle, gbHandle C.TorchTensor
+	cb := C.int(0)
+	if computeBias {
+		cb = 1
+	}
+	cerr := C.godl_conv2d_backward(
+		gradOutput.handle, input.handle, weight.handle,
+		(*C.int64_t)(unsafe.Pointer(&stride[0])),
+		(*C.int64_t)(unsafe.Pointer(&padding[0])),
+		(*C.int64_t)(unsafe.Pointer(&dilation[0])),
+		C.int64_t(groups),
+		cb,
+		&giHandle, &gwHandle, &gbHandle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, nil, nil, err
+	}
+	gradInput = &Tensor{handle: giHandle}
+	gradWeight = &Tensor{handle: gwHandle}
+	if computeBias {
+		gradBias = &Tensor{handle: gbHandle}
+	}
+	return gradInput, gradWeight, gradBias, nil
 }
 
 // --- Device operations ---

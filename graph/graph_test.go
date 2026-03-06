@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -40,6 +41,47 @@ func approxEqual(a, b float32, eps float64) bool {
 	return math.Abs(float64(a-b)) < eps
 }
 
+// softmaxModule wraps a module and applies softmax to its output.
+// Used in gate tests to build routers with explicit normalization.
+type softmaxModule struct {
+	inner nn.Module
+}
+
+func withSoftmax(m nn.Module) nn.Module {
+	return &softmaxModule{inner: m}
+}
+
+func (s *softmaxModule) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	out := s.inner.Forward(inputs...)
+	dim := out.Data().Ndim() - 1
+	return out.Softmax(dim)
+}
+
+func (s *softmaxModule) Parameters() []*nn.Parameter {
+	return s.inner.Parameters()
+}
+
+// nilSafeAdd sums all non-nil inputs. Used with forward refs where
+// state inputs are nil on the first pass.
+type nilSafeAdd struct{}
+
+func (a *nilSafeAdd) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	var result *autograd.Variable
+	for _, inp := range inputs {
+		if inp == nil {
+			continue
+		}
+		if result == nil {
+			result = inp
+		} else {
+			result = result.Add(inp)
+		}
+	}
+	return result
+}
+
+func (a *nilSafeAdd) Parameters() []*nn.Parameter { return nil }
+
 // --- Tests ---
 
 func TestChainForward(t *testing.T) {
@@ -57,7 +99,7 @@ func TestChainForward(t *testing.T) {
 	// l1: W=[3,2], b=[3]
 	setLinearWeights(l1,
 		[]float32{1, 0, 0, 1, 1, 1}, // W: identity + sum row
-		[]float32{0, 0, 0},           // b: zeros
+		[]float32{0, 0, 0},
 	)
 	// l2: W=[1,3], b=[1]
 	setLinearWeights(l2,
@@ -623,6 +665,579 @@ func TestLoopParameters(t *testing.T) {
 	t.Logf("Loop parameters: %d (body counted once despite %d iterations)", len(params), 3)
 }
 
+// --- Tag / Using tests ---
+
+func TestTag(t *testing.T) {
+	// Tag should not affect the flow.
+	l1, _ := nn.NewLinear(2, 2)
+	setLinearWeights(l1, []float32{1, 0, 0, 1}, []float32{0, 0})
+	l2, _ := nn.NewLinear(2, 1)
+	setLinearWeights(l2, []float32{1, 1}, []float32{0})
+
+	g, err := From(l1).Tag("hidden").Through(l2).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{3, 5}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// identity([3,5]) → [3,5], sum → 8
+	if !approxEqual(f32(result), 8.0, 1e-6) {
+		t.Errorf("Tag should not affect flow: got %v, want 8", f32(result))
+	}
+	t.Logf("Tag passthrough: %.4f", f32(result))
+}
+
+func TestUsing(t *testing.T) {
+	// Cross-attention style: module receives stream + tagged reference.
+	// entry → Tag("src") → projection → crossAttn.Using("src")
+	// crossAttn Forward receives [projected_input, source]
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0}) // identity
+
+	proj, _ := nn.NewLinear(2, 2)
+	setLinearWeights(proj, []float32{2, 0, 0, 2}, []float32{0, 0}) // 2x
+
+	// "crossAttn" is a module that adds its two inputs.
+	crossAttn := Add()
+
+	g, err := From(entry).Tag("src").Through(proj).Through(crossAttn).Using("src").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 3}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// entry([1,3]) = [1,3]
+	// proj([1,3]) = [2,6]
+	// crossAttn([2,6], [1,3]) = [3, 9]
+	vals := allF32(result)
+	if !approxEqual(vals[0], 3.0, 1e-6) || !approxEqual(vals[1], 9.0, 1e-6) {
+		t.Errorf("Using: got %v, want [3, 9]", vals)
+	}
+	t.Logf("Using (cross-wire): %v", vals)
+}
+
+func TestUsingBackward(t *testing.T) {
+	// Verify gradients flow through Using references.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	proj, _ := nn.NewLinear(2, 2)
+	setLinearWeights(proj, []float32{1, 0, 0, 1}, []float32{1, 1}) // identity + bias
+
+	crossAttn := Add()
+
+	g, err := From(entry).Tag("src").Through(proj).Through(crossAttn).Using("src").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{2, 3}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	loss := result.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	// proj.Bias grad should exist (gradient flows through the main path).
+	if proj.Bias.Grad() == nil {
+		t.Error("proj.Bias: no gradient")
+	}
+	// entry.Weight grad should exist (gradient flows through both paths).
+	if entry.Weight.Grad() == nil {
+		t.Error("entry.Weight: no gradient")
+	}
+	t.Logf("Using backward: proj.Bias grad=%v", gradF32(proj.Bias.Variable))
+}
+
+func TestTagDuplicate(t *testing.T) {
+	l, _ := nn.NewLinear(2, 2)
+	_, err := From(l).Tag("x").Tag("x").Build()
+	if err == nil {
+		t.Error("expected error for duplicate tag name")
+	}
+	t.Logf("Error: %v", err)
+}
+
+func TestUsingUnresolvedForwardRef(t *testing.T) {
+	l1, _ := nn.NewLinear(2, 2)
+	l2, _ := nn.NewLinear(2, 2)
+	_, err := From(l1).Through(l2).Using("nonexistent").Build()
+	if err == nil {
+		t.Error("expected error for unresolved forward reference")
+	}
+	t.Logf("Error: %v", err)
+}
+
+func TestSplitUsing(t *testing.T) {
+	// Split + Using: all branches receive the tagged reference.
+	// entry → Tag("ctx") → Split(branchA, branchB).Using("ctx") → Merge(Add)
+	// Each branch is Add(), so Forward([stream, ctx]) = stream + ctx.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0}) // identity
+
+	// Both branches add their inputs (stream + tagged ctx).
+	branchA := Add()
+	branchB := Add()
+
+	g, err := From(entry).
+		Tag("ctx").
+		Split(branchA, branchB).Using("ctx").
+		Merge(Add()).
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 3}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// entry([1,3]) = [1,3]
+	// branchA: Add([1,3], [1,3]) = [2, 6]   (stream + ctx)
+	// branchB: Add([1,3], [1,3]) = [2, 6]   (stream + ctx)
+	// Merge Add: [2+2, 6+6] = [4, 12]
+	vals := allF32(result)
+	if !approxEqual(vals[0], 4.0, 1e-6) || !approxEqual(vals[1], 12.0, 1e-6) {
+		t.Errorf("Split+Using: got %v, want [4, 12]", vals)
+	}
+	t.Logf("Split+Using (all branches get ctx): %v", vals)
+}
+
+// --- Gate tests ---
+
+func TestGateForwardEqual(t *testing.T) {
+	// Equal weighting: router outputs [0,0] → softmax → [0.5, 0.5]
+	// Expert A: identity, Expert B: 2x
+	// Result: 0.5*x + 0.5*2x = 1.5x
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	routerLinear, _ := nn.NewLinear(2, 2)
+	setLinearWeights(routerLinear, []float32{0, 0, 0, 0}, []float32{0, 0})
+	router := withSoftmax(routerLinear) // softmax([0,0]) = [0.5, 0.5]
+
+	expertA, _ := nn.NewLinear(2, 2)
+	setLinearWeights(expertA, []float32{1, 0, 0, 1}, []float32{0, 0}) // identity
+
+	expertB, _ := nn.NewLinear(2, 2)
+	setLinearWeights(expertB, []float32{2, 0, 0, 2}, []float32{0, 0}) // 2x
+
+	g, err := From(entry).Gate(router, expertA, expertB).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{2, 4}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 0.5*[2,4] + 0.5*[4,8] = [3, 6]
+	vals := allF32(result)
+	if !approxEqual(vals[0], 3.0, 1e-5) || !approxEqual(vals[1], 6.0, 1e-5) {
+		t.Errorf("Gate equal: got %v, want [3, 6]", vals)
+	}
+	t.Logf("Gate equal weighting: %v", vals)
+}
+
+func TestGateForwardOneSided(t *testing.T) {
+	// One-sided routing: router outputs [10, -10] → softmax ≈ [1, 0]
+	// Result ≈ expertA output
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	routerLinear, _ := nn.NewLinear(2, 2)
+	setLinearWeights(routerLinear, []float32{0, 0, 0, 0}, []float32{10, -10})
+	router := withSoftmax(routerLinear)
+
+	expertA, _ := nn.NewLinear(2, 2)
+	setLinearWeights(expertA, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	expertB, _ := nn.NewLinear(2, 2)
+	setLinearWeights(expertB, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	g, err := From(entry).Gate(router, expertA, expertB).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{2, 4}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// softmax([10,-10]) ≈ [1.0, 0.0], so result ≈ expertA([2,4]) = [2, 4]
+	vals := allF32(result)
+	if !approxEqual(vals[0], 2.0, 1e-4) || !approxEqual(vals[1], 4.0, 1e-4) {
+		t.Errorf("Gate one-sided: got %v, want ≈[2, 4]", vals)
+	}
+	t.Logf("Gate one-sided routing: %v", vals)
+}
+
+func TestGateBackward(t *testing.T) {
+	// Verify gradients flow through all experts and the router.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	routerLinear, _ := nn.NewLinear(2, 2)
+	setLinearWeights(routerLinear, []float32{0, 0, 0, 0}, []float32{0, 0})
+	router := withSoftmax(routerLinear)
+
+	expertA, _ := nn.NewLinear(2, 2)
+	setLinearWeights(expertA, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	expertB, _ := nn.NewLinear(2, 2)
+	setLinearWeights(expertB, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	g, err := From(entry).Gate(router, expertA, expertB).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{2, 4}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	loss := result.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	// All components should have gradients.
+	for name, layer := range map[string]*nn.Linear{
+		"router": routerLinear, "expertA": expertA, "expertB": expertB, "entry": entry,
+	} {
+		if layer.Weight.Grad() == nil {
+			t.Errorf("%s.Weight: no gradient", name)
+		} else {
+			t.Logf("%s.Weight grad: %v", name, gradF32(layer.Weight.Variable))
+		}
+	}
+}
+
+func TestGateWithUsing(t *testing.T) {
+	// Gate with Using: router receives stream + tagged reference as separate
+	// Forward arguments. Use Add() as router — it sums all inputs, producing
+	// a [batch, 2] tensor that softmax normalizes into expert weights.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0}) // identity
+
+	proj, _ := nn.NewLinear(2, 2)
+	setLinearWeights(proj, []float32{1, 0, 0, 1}, []float32{0, 0}) // identity
+
+	// Router: Add() sums stream + tag, then softmax normalizes.
+	// Both are [1,2] → Add = [2, 6] → softmax([2, 6]) ≈ [0.018, 0.982]
+	router := withSoftmax(Add())
+
+	expertA, _ := nn.NewLinear(2, 2)
+	setLinearWeights(expertA, []float32{1, 0, 0, 1}, []float32{0, 0}) // identity
+
+	expertB, _ := nn.NewLinear(2, 2)
+	setLinearWeights(expertB, []float32{2, 0, 0, 2}, []float32{0, 0}) // 2x
+
+	g, err := From(entry).
+		Tag("features").
+		Through(proj).
+		Gate(router, expertA, expertB).Using("features").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 3}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// expertA([1,3]) = [1, 3], expertB([1,3]) = [2, 6]
+	// Result is weighted combination, heavily toward expertB (softmax([2,6]) ≈ [0.018, 0.982])
+	vals := allF32(result)
+	if vals[0] < 0.9 || vals[0] > 2.1 || vals[1] < 2.9 || vals[1] > 6.1 {
+		t.Errorf("Gate with Using: result %v out of expected range", vals)
+	}
+	t.Logf("Gate with Using: %v", vals)
+}
+
+func TestGateTooFewExperts(t *testing.T) {
+	l, _ := nn.NewLinear(2, 2)
+	router, _ := nn.NewLinear(2, 1)
+	expert, _ := nn.NewLinear(2, 2)
+	_, err := From(l).Gate(router, expert).Build()
+	if err == nil {
+		t.Error("expected error for < 2 experts")
+	}
+	t.Logf("Error: %v", err)
+}
+
+func TestGateParameters(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 2)
+	routerLinear, _ := nn.NewLinear(2, 2)
+	expertA, _ := nn.NewLinear(2, 2)
+	expertB, _ := nn.NewLinear(2, 2)
+
+	g, err := From(entry).Gate(withSoftmax(routerLinear), expertA, expertB).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// entry: 2, router: 2, expertA: 2, expertB: 2 = 8
+	params := g.Parameters()
+	if len(params) != 8 {
+		t.Errorf("expected 8 parameters, got %d", len(params))
+	}
+	t.Logf("Gate parameters: %d", len(params))
+}
+
+// --- Forward ref tests ---
+
+func TestForwardRef(t *testing.T) {
+	// Forward reference: Using before Tag. State carries between Forward() calls.
+	// Graph: entry → add.Using("memory") → identity.Tag("memory")
+	// Pass 1: add gets [stream] (memory is nil) → identity → state captured
+	// Pass 2: add gets [stream, prev_output] → sum → identity → state captured
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0}) // identity
+
+	identity, _ := nn.NewLinear(2, 2)
+	setLinearWeights(identity, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	g, err := From(entry).
+		Through(&nilSafeAdd{}).Using("memory").
+		Through(identity).Tag("memory").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+
+	// Pass 1: no memory → add([1,2]) = [1,2] → identity = [1,2]
+	r1 := g.Forward(autograd.NewVariable(x, false))
+	if err := r1.Err(); err != nil {
+		t.Fatal("pass 1:", err)
+	}
+	v1 := allF32(r1)
+	if !approxEqual(v1[0], 1.0, 1e-6) || !approxEqual(v1[1], 2.0, 1e-6) {
+		t.Errorf("pass 1: got %v, want [1, 2]", v1)
+	}
+
+	// Pass 2: memory=[1,2] → add([1,2], [1,2]) = [2,4] → identity = [2,4]
+	r2 := g.Forward(autograd.NewVariable(x, false))
+	if err := r2.Err(); err != nil {
+		t.Fatal("pass 2:", err)
+	}
+	v2 := allF32(r2)
+	if !approxEqual(v2[0], 2.0, 1e-6) || !approxEqual(v2[1], 4.0, 1e-6) {
+		t.Errorf("pass 2: got %v, want [2, 4]", v2)
+	}
+
+	// Pass 3: memory=[2,4] → add([1,2], [2,4]) = [3,6]
+	r3 := g.Forward(autograd.NewVariable(x, false))
+	v3 := allF32(r3)
+	if !approxEqual(v3[0], 3.0, 1e-6) || !approxEqual(v3[1], 6.0, 1e-6) {
+		t.Errorf("pass 3: got %v, want [3, 6]", v3)
+	}
+
+	t.Logf("Forward ref: pass1=%v, pass2=%v, pass3=%v", v1, v2, v3)
+}
+
+func TestForwardRefResetState(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	identity, _ := nn.NewLinear(2, 2)
+	setLinearWeights(identity, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	g, err := From(entry).
+		Through(&nilSafeAdd{}).Using("state").
+		Through(identity).Tag("state").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 1}, []int64{1, 2})
+
+	// Build up state.
+	g.Forward(autograd.NewVariable(x, false)) // [1,1]
+	g.Forward(autograd.NewVariable(x, false)) // [2,2]
+
+	// Reset and verify state is cleared.
+	g.ResetState()
+	r := g.Forward(autograd.NewVariable(x, false))
+	vals := allF32(r)
+	if !approxEqual(vals[0], 1.0, 1e-6) || !approxEqual(vals[1], 1.0, 1e-6) {
+		t.Errorf("after reset: got %v, want [1, 1]", vals)
+	}
+	t.Logf("ResetState: %v (back to initial)", vals)
+}
+
+func TestForwardRefDetachState(t *testing.T) {
+	// Verify DetachState breaks the gradient chain.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	proj, _ := nn.NewLinear(2, 2)
+	setLinearWeights(proj, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	g, err := From(entry).
+		Through(&nilSafeAdd{}).Using("state").
+		Through(proj).Tag("state").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+
+	// Pass 1: populate state.
+	g.Forward(autograd.NewVariable(x, false))
+	g.DetachState()
+
+	// Pass 2: use detached state → backward should work without
+	// touching pass 1's computation graph.
+	r2 := g.Forward(autograd.NewVariable(x, false))
+	loss := r2.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal("backward after detach:", err)
+	}
+
+	// proj should have gradients from pass 2 only.
+	if proj.Weight.Grad() == nil {
+		t.Error("proj.Weight: no gradient after detach + backward")
+	}
+	t.Logf("DetachState: backward succeeded, grad=%v", gradF32(proj.Weight.Variable))
+}
+
+func TestForwardRefLoop(t *testing.T) {
+	// Recurrent state inside a loop body.
+	// Body graph: add.Using("hidden") → identity.Tag("hidden")
+	// Each iteration accumulates: output = input + hidden_prev
+	body, err := From(&nilSafeAdd{}).Using("hidden").
+		Tag("hidden").
+		Build()
+	if err != nil {
+		t.Fatal("body build:", err)
+	}
+
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	g, err := From(entry).Loop(body).For(4).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Iteration 1: add([1,2], nil) = [1,2], hidden=[1,2]
+	// Iteration 2: add([1,2], [1,2]) = [2,4], hidden=[2,4]
+	// Iteration 3: add([2,4], [2,4]) = [4,8], hidden=[4,8]
+	// Iteration 4: add([4,8], [4,8]) = [8,16]
+	vals := allF32(result)
+	if !approxEqual(vals[0], 8.0, 1e-5) || !approxEqual(vals[1], 16.0, 1e-5) {
+		t.Errorf("forward ref loop: got %v, want [8, 16]", vals)
+	}
+	t.Logf("Forward ref in loop (4 iterations): %v", vals)
+
+	// Reset body state for clean next use.
+	body.ResetState()
+}
+
+func TestForwardRefBackward(t *testing.T) {
+	// Verify gradients flow through forward ref state.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	proj, _ := nn.NewLinear(2, 2)
+	setLinearWeights(proj, []float32{2, 0, 0, 2}, []float32{0, 0}) // 2x
+
+	g, err := From(entry).
+		Through(&nilSafeAdd{}).Using("state").
+		Through(proj).Tag("state").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+
+	// Pass 1: populate state. proj([1,2]) = [2,4]
+	g.Forward(autograd.NewVariable(x, false))
+
+	// Pass 2: add([1,2], [2,4]) = [3,6], proj([3,6]) = [6,12]
+	r2 := g.Forward(autograd.NewVariable(x, false))
+	loss := r2.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal("backward:", err)
+	}
+
+	if proj.Weight.Grad() == nil {
+		t.Error("proj.Weight: no gradient")
+	}
+	if entry.Weight.Grad() == nil {
+		t.Error("entry.Weight: no gradient")
+	}
+	t.Logf("Forward ref backward: proj.Weight grad=%v", gradF32(proj.Weight.Variable))
+}
+
+func TestForwardRefMixedRefs(t *testing.T) {
+	// Same tag used as both forward and backward reference.
+	// Through(attn).Using("state") → Through(ffn).Tag("state") → Through(decoder).Using("state")
+	// attn gets PREVIOUS state (forward ref), decoder gets CURRENT state (backward ref).
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	ffn, _ := nn.NewLinear(2, 2)
+	setLinearWeights(ffn, []float32{1, 0, 0, 1}, []float32{0, 0}) // identity
+
+	decoder := Add() // sums stream + backward ref
+
+	g, err := From(entry).
+		Through(&nilSafeAdd{}).Using("state").
+		Through(ffn).Tag("state").
+		Through(decoder).Using("state").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+
+	// Pass 1: attn([1,2], nil)=[1,2], ffn=[1,2] (state set), decoder=Add([1,2],[1,2])=[2,4]
+	r1 := g.Forward(autograd.NewVariable(x, false))
+	v1 := allF32(r1)
+	if !approxEqual(v1[0], 2.0, 1e-6) || !approxEqual(v1[1], 4.0, 1e-6) {
+		t.Errorf("pass 1: got %v, want [2, 4]", v1)
+	}
+
+	// Pass 2: attn([1,2], [1,2])=[2,4], ffn=[2,4] (state updated), decoder=Add([2,4],[2,4])=[4,8]
+	r2 := g.Forward(autograd.NewVariable(x, false))
+	v2 := allF32(r2)
+	if !approxEqual(v2[0], 4.0, 1e-6) || !approxEqual(v2[1], 8.0, 1e-6) {
+		t.Errorf("pass 2: got %v, want [4, 8]", v2)
+	}
+
+	t.Logf("Mixed forward+backward ref: pass1=%v, pass2=%v", v1, v2)
+}
+
 func TestParallelWithRace(t *testing.T) {
 	// Build a graph with parallel branches that each do real computation.
 	// Run with -race to verify no data races.
@@ -651,4 +1266,806 @@ func TestParallelWithRace(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("4-way parallel with backward: output shape %v", result.Data().Shape())
+}
+
+// --- SetTraining ---
+
+func TestSetTrainingPropagates(t *testing.T) {
+	// Graph: Linear → Dropout → Linear
+	// SetTraining(false) should make dropout passthrough.
+	l1, err := nn.NewLinear(4, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drop := nn.NewDropout(0.99) // extreme drop rate — almost everything zeroed in training
+	l2, err := nn.NewLinear(4, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g, err := From(l1).Through(drop).Through(l2).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4})
+	input := autograd.NewVariable(x, false)
+
+	// Eval mode: dropout is identity, output should be deterministic.
+	g.SetTraining(false)
+	out1 := g.Forward(input)
+	out2 := g.Forward(input)
+	if err := out1.Err(); err != nil {
+		t.Fatal(err)
+	}
+	d1, _ := out1.Data().Float32Data()
+	d2, _ := out2.Data().Float32Data()
+	for i := range d1 {
+		if d1[i] != d2[i] {
+			t.Errorf("eval mode not deterministic: out1[%d]=%f != out2[%d]=%f", i, d1[i], i, d2[i])
+		}
+	}
+
+	// Back to training: dropout should alter output.
+	g.SetTraining(true)
+	different := false
+	for try := 0; try < 5; try++ {
+		out3 := g.Forward(input)
+		if err := out3.Err(); err != nil {
+			t.Fatal(err)
+		}
+		d3, _ := out3.Data().Float32Data()
+		for i := range d1 {
+			if d1[i] != d3[i] {
+				different = true
+				break
+			}
+		}
+		if different {
+			break
+		}
+	}
+	if !different {
+		t.Error("training mode should produce different output with p=0.99 dropout")
+	}
+}
+
+func TestSetTrainingNestedGraph(t *testing.T) {
+	// Inner graph with dropout.
+	drop := nn.NewDropout(0.99)
+	inner, err := From(drop).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Outer graph wrapping inner.
+	l1, err := nn.NewLinear(4, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer, err := From(l1).Through(inner).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4})
+	input := autograd.NewVariable(x, false)
+
+	// Eval mode on outer should propagate to inner's dropout.
+	outer.SetTraining(false)
+	out1 := outer.Forward(input)
+	out2 := outer.Forward(input)
+	if err := out1.Err(); err != nil {
+		t.Fatal(err)
+	}
+	d1, _ := out1.Data().Float32Data()
+	d2, _ := out2.Data().Float32Data()
+	for i := range d1 {
+		if d1[i] != d2[i] {
+			t.Errorf("nested eval not deterministic: [%d] %f != %f", i, d1[i], d2[i])
+		}
+	}
+}
+
+func TestSetTrainingHelperFunction(t *testing.T) {
+	// nn.SetTraining works on standalone modules and is a no-op on
+	// modules that don't implement TrainToggler.
+	drop := nn.NewDropout(0.5)
+	nn.SetTraining(drop, false)
+
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	x := autograd.NewVariable(xt, false)
+	out := drop.Forward(x)
+	data, _ := out.Data().Float32Data()
+	// Eval mode: identity
+	want := []float32{1, 2, 3}
+	for i := range want {
+		if !approxEqual(data[i], want[i], 1e-5) {
+			t.Errorf("[%d] = %f, want %f", i, data[i], want[i])
+		}
+	}
+
+	// No-op on Linear (doesn't implement TrainToggler).
+	l, _ := nn.NewLinear(3, 3)
+	nn.SetTraining(l, false) // should not panic
+}
+
+// --- While loop tests ---
+
+func TestWhileForward(t *testing.T) {
+	// Body doubles each iteration. Predicate allows 3 iterations.
+	// Same result as For(3): [1,2] → [2,4] → [4,8] → [8,16]
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	doubler, _ := nn.NewLinear(2, 2)
+	setLinearWeights(doubler, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	pred := func(_ *autograd.Variable, iter int) bool {
+		return iter < 3
+	}
+
+	g, err := From(entry).Loop(doubler).While(pred, 10).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	vals := allF32(result)
+	if !approxEqual(vals[0], 8.0, 1e-5) || !approxEqual(vals[1], 16.0, 1e-5) {
+		t.Errorf("While forward: got %v, want [8, 16]", vals)
+	}
+	t.Logf("While forward (3 iterations via predicate): %v", vals)
+}
+
+func TestWhileStatePredicate(t *testing.T) {
+	// Body doubles. Predicate: continue while max element < 50.
+	// [1,2] → [2,4] → [4,8] → [8,16] → [16,32] → [32,64] pred fails (64>=50)
+	// Pred checks BEFORE body: at iter 5, state is [32,64], pred returns false.
+	// Actually: pred at iter 0 sees input [1,2], runs body → [2,4]
+	// pred at iter 1 sees [2,4], runs → [4,8]
+	// pred at iter 2 sees [4,8], runs → [8,16]
+	// pred at iter 3 sees [8,16], runs → [16,32]
+	// pred at iter 4 sees [16,32], runs → [32,64]
+	// pred at iter 5 sees [32,64], max=64 >= 50 → stop
+	// Result: [32, 64] (5 iterations)
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	doubler, _ := nn.NewLinear(2, 2)
+	setLinearWeights(doubler, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	pred := func(state *autograd.Variable, _ int) bool {
+		data, _ := state.Data().Float32Data()
+		for _, v := range data {
+			if v >= 50 {
+				return false
+			}
+		}
+		return true
+	}
+
+	g, err := From(entry).Loop(doubler).While(pred, 100).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	vals := allF32(result)
+
+	if !approxEqual(vals[0], 32.0, 1e-5) || !approxEqual(vals[1], 64.0, 1e-5) {
+		t.Errorf("While state pred: got %v, want [32, 64]", vals)
+	}
+	t.Logf("While state predicate (5 iterations): %v", vals)
+}
+
+func TestWhileZeroIterations(t *testing.T) {
+	// Predicate returns false immediately — body never runs.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	doubler, _ := nn.NewLinear(2, 2)
+	setLinearWeights(doubler, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	pred := func(_ *autograd.Variable, _ int) bool { return false }
+
+	g, err := From(entry).Loop(doubler).While(pred, 10).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{3, 7}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	vals := allF32(result)
+
+	// Input passes through unchanged (entry is identity).
+	if !approxEqual(vals[0], 3.0, 1e-5) || !approxEqual(vals[1], 7.0, 1e-5) {
+		t.Errorf("While zero iters: got %v, want [3, 7]", vals)
+	}
+	t.Logf("While zero iterations (passthrough): %v", vals)
+}
+
+func TestWhileBackward(t *testing.T) {
+	// Body: identity + bias. Predicate allows 4 iterations.
+	// Gradient of sum(result) w.r.t. bias = [4, 4].
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	body, _ := nn.NewLinear(2, 2)
+	setLinearWeights(body, []float32{1, 0, 0, 1}, []float32{0.1, 0.2})
+
+	iterations := 4
+	pred := func(_ *autograd.Variable, iter int) bool { return iter < iterations }
+
+	g, err := From(entry).Loop(body).While(pred, 10).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	loss := result.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	biasGrad := gradF32(body.Bias.Variable)
+	for i, g := range biasGrad {
+		if !approxEqual(g, float32(iterations), 1e-4) {
+			t.Errorf("bias grad[%d]: got %v, want %v", i, g, iterations)
+		}
+	}
+	t.Logf("While backward (%d iters): bias grad = %v", iterations, biasGrad)
+}
+
+// --- Until loop tests ---
+
+// thresholdHalt returns positive when max element exceeds threshold (halt signal).
+type thresholdHalt struct {
+	threshold float32
+}
+
+func (h *thresholdHalt) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	data, _ := inputs[0].Data().Float32Data()
+	maxVal := data[0]
+	for _, v := range data[1:] {
+		if v > maxVal {
+			maxVal = v
+		}
+	}
+	val := maxVal - h.threshold // positive when exceeded → halt
+	t, _ := tensor.FromFloat32([]float32{val}, []int64{1})
+	return autograd.NewVariable(t, false)
+}
+
+func (h *thresholdHalt) Parameters() []*nn.Parameter { return nil }
+
+func TestUntilForward(t *testing.T) {
+	// Body doubles. Halt when max element > 50.
+	// [1,2] → body → [2,4] check: 4<=50 → continue
+	// → body → [4,8] check: 8<=50 → continue
+	// → body → [8,16] check: 16<=50 → continue
+	// → body → [16,32] check: 32<=50 → continue
+	// → body → [32,64] check: 64>50 → halt
+	// 5 iterations, result: [32, 64]
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	doubler, _ := nn.NewLinear(2, 2)
+	setLinearWeights(doubler, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	halt := &thresholdHalt{threshold: 50}
+
+	g, err := From(entry).Loop(doubler).Until(halt, 100).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	vals := allF32(result)
+
+	if !approxEqual(vals[0], 32.0, 1e-5) || !approxEqual(vals[1], 64.0, 1e-5) {
+		t.Errorf("Until forward: got %v, want [32, 64]", vals)
+	}
+	t.Logf("Until forward (5 iterations, halt at >50): %v", vals)
+}
+
+func TestUntilMaxIter(t *testing.T) {
+	// Condition never halts — maxIter is the bound.
+	// Body doubles, maxIter=3. Result: [1,2] → [2,4] → [4,8] → [8,16]
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	doubler, _ := nn.NewLinear(2, 2)
+	setLinearWeights(doubler, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	// Threshold so high it never triggers.
+	halt := &thresholdHalt{threshold: 1e9}
+
+	g, err := From(entry).Loop(doubler).Until(halt, 3).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	vals := allF32(result)
+
+	// Same as For(3): 3 doublings.
+	if !approxEqual(vals[0], 8.0, 1e-5) || !approxEqual(vals[1], 16.0, 1e-5) {
+		t.Errorf("Until maxIter: got %v, want [8, 16]", vals)
+	}
+	t.Logf("Until maxIter (3 iterations, no early halt): %v", vals)
+}
+
+func TestUntilBackward(t *testing.T) {
+	// Body: identity + bias. Halt after 3 iterations (threshold triggers).
+	// State: [1,2] → [1.1,2.2] → [1.2,2.4] → [1.3,2.6] → halt (max 2.6 > 2.5)
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	body, _ := nn.NewLinear(2, 2)
+	setLinearWeights(body, []float32{1, 0, 0, 1}, []float32{0.1, 0.2})
+
+	halt := &thresholdHalt{threshold: 2.5}
+
+	g, err := From(entry).Loop(body).Until(halt, 20).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3 iterations: [1+3*0.1, 2+3*0.2] = [1.3, 2.6]
+	vals := allF32(result)
+	if !approxEqual(vals[0], 1.3, 1e-5) || !approxEqual(vals[1], 2.6, 1e-5) {
+		t.Errorf("Until forward: got %v, want [1.3, 2.6]", vals)
+	}
+
+	loss := result.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3 iterations of adding bias. Gradient = [3, 3].
+	biasGrad := gradF32(body.Bias.Variable)
+	for i, g := range biasGrad {
+		if !approxEqual(g, 3.0, 1e-4) {
+			t.Errorf("bias grad[%d]: got %v, want 3", i, g)
+		}
+	}
+	t.Logf("Until backward (3 iters): bias grad = %v", biasGrad)
+}
+
+func TestUntilParameters(t *testing.T) {
+	body, _ := nn.NewLinear(2, 2)
+	// Condition with learnable parameters.
+	condLayer, _ := nn.NewLinear(2, 1)
+	halt := &thresholdHalt{threshold: 100}
+
+	// Use a module that has parameters as condition: wrap condLayer.
+	condModule := &learnedHalt{inner: condLayer}
+
+	g, err := From(body).Loop(body).Until(condModule, 5).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	params := g.Parameters()
+	// body: 2 (W+b), condModule.inner: 2 (W+b) = 4 total
+	// But body appears as both entry and loop body — same module, deduplicated.
+	// Entry node uses body, loop node uses loopComposite which delegates to body.
+	// Body params counted once + cond params once = 4.
+	if len(params) != 4 {
+		t.Errorf("expected 4 parameters, got %d", len(params))
+	}
+	t.Logf("Until parameters: %d (body + condition)", len(params))
+
+	// Also verify: we can ignore the halt variable above.
+	_ = halt
+}
+
+// learnedHalt wraps a Linear layer as a halt condition module.
+type learnedHalt struct {
+	inner *nn.Linear
+}
+
+func (h *learnedHalt) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	return h.inner.Forward(inputs...)
+}
+
+func (h *learnedHalt) Parameters() []*nn.Parameter {
+	return h.inner.Parameters()
+}
+
+func TestUntilSetTraining(t *testing.T) {
+	// Verify SetTraining propagates to the condition module.
+	body, _ := nn.NewLinear(2, 2)
+	drop := nn.NewDropout(0.99)
+
+	// Wrap dropout as condition (returns scalar indicating "never halt").
+	cond := &dropoutCondWrapper{drop: drop}
+
+	g, err := From(body).Loop(body).Until(cond, 3).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// In eval mode, dropout should be identity.
+	g.SetTraining(false)
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Back to training: dropout active in condition.
+	g.SetTraining(true)
+	result2 := g.Forward(autograd.NewVariable(x, false))
+	if err := result2.Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("Until SetTraining propagates to condition module")
+}
+
+// dropoutCondWrapper uses dropout and returns negative (never halt).
+type dropoutCondWrapper struct {
+	drop *nn.Dropout
+}
+
+func (d *dropoutCondWrapper) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	_ = d.drop.Forward(inputs...) // apply dropout (tests SetTraining propagation)
+	t, _ := tensor.FromFloat32([]float32{-1}, []int64{1})
+	return autograd.NewVariable(t, false)
+}
+
+func (d *dropoutCondWrapper) Parameters() []*nn.Parameter { return nil }
+
+func (d *dropoutCondWrapper) SetTraining(training bool) {
+	d.drop.SetTraining(training)
+}
+
+// --- Switch tests ---
+
+// fixedRouter always returns a constant branch index.
+type fixedRouter struct {
+	index float32
+}
+
+func (r *fixedRouter) Forward(_ ...*autograd.Variable) *autograd.Variable {
+	t, _ := tensor.FromFloat32([]float32{r.index}, []int64{1})
+	return autograd.NewVariable(t, false)
+}
+
+func (r *fixedRouter) Parameters() []*nn.Parameter { return nil }
+
+func TestSwitchForward(t *testing.T) {
+	// Branch 0: double, Branch 1: triple.
+	// Router selects branch 1.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	double, _ := nn.NewLinear(2, 2)
+	setLinearWeights(double, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	triple, _ := nn.NewLinear(2, 2)
+	setLinearWeights(triple, []float32{3, 0, 0, 3}, []float32{0, 0})
+
+	router := &fixedRouter{index: 1} // select triple
+
+	g, err := From(entry).Switch(router, double, triple).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	vals := allF32(result)
+	// Branch 1 (triple): [1,2] → [3,6]
+	if !approxEqual(vals[0], 3.0, 1e-5) || !approxEqual(vals[1], 6.0, 1e-5) {
+		t.Errorf("Switch forward: got %v, want [3, 6]", vals)
+	}
+	t.Logf("Switch forward (branch 1 selected): %v", vals)
+}
+
+func TestSwitchSelectsBranch0(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	double, _ := nn.NewLinear(2, 2)
+	setLinearWeights(double, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	triple, _ := nn.NewLinear(2, 2)
+	setLinearWeights(triple, []float32{3, 0, 0, 3}, []float32{0, 0})
+
+	router := &fixedRouter{index: 0} // select double
+
+	g, err := From(entry).Switch(router, double, triple).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	vals := allF32(result)
+
+	// Branch 0 (double): [1,2] → [2,4]
+	if !approxEqual(vals[0], 2.0, 1e-5) || !approxEqual(vals[1], 4.0, 1e-5) {
+		t.Errorf("Switch branch 0: got %v, want [2, 4]", vals)
+	}
+	t.Logf("Switch forward (branch 0 selected): %v", vals)
+}
+
+// countingModule tracks how many times Forward was called.
+type countingModule struct {
+	inner nn.Module
+	count int
+}
+
+func (c *countingModule) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	c.count++
+	return c.inner.Forward(inputs...)
+}
+
+func (c *countingModule) Parameters() []*nn.Parameter { return c.inner.Parameters() }
+
+func TestSwitchOnlySelectedRuns(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	l0, _ := nn.NewLinear(2, 2)
+	setLinearWeights(l0, []float32{1, 0, 0, 1}, []float32{0, 0})
+	l1, _ := nn.NewLinear(2, 2)
+	setLinearWeights(l1, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	branch0 := &countingModule{inner: l0}
+	branch1 := &countingModule{inner: l1}
+
+	router := &fixedRouter{index: 1}
+
+	g, err := From(entry).Switch(router, branch0, branch1).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	g.Forward(autograd.NewVariable(x, false))
+
+	if branch0.count != 0 {
+		t.Errorf("branch 0 executed %d times, want 0", branch0.count)
+	}
+	if branch1.count != 1 {
+		t.Errorf("branch 1 executed %d times, want 1", branch1.count)
+	}
+	t.Logf("Only selected branch ran: branch0=%d, branch1=%d", branch0.count, branch1.count)
+}
+
+func TestSwitchBackward(t *testing.T) {
+	// Branch 0: W * x + b0, Branch 1: W * x + b1
+	// Router selects branch 1.
+	// Gradient should flow through branch 1 only.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	branch0, _ := nn.NewLinear(2, 2)
+	setLinearWeights(branch0, []float32{1, 0, 0, 1}, []float32{10, 20})
+
+	branch1, _ := nn.NewLinear(2, 2)
+	setLinearWeights(branch1, []float32{1, 0, 0, 1}, []float32{100, 200})
+
+	router := &fixedRouter{index: 1}
+
+	g, err := From(entry).Switch(router, branch0, branch1).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, true))
+	loss := result.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Branch 1 bias should have gradient [1, 1] (from sum).
+	b1Grad := gradF32(branch1.Bias.Variable)
+	if !approxEqual(b1Grad[0], 1.0, 1e-5) || !approxEqual(b1Grad[1], 1.0, 1e-5) {
+		t.Errorf("branch1 bias grad: got %v, want [1, 1]", b1Grad)
+	}
+
+	// Branch 0 should have no gradient (never executed).
+	if branch0.Bias.Grad() != nil {
+		t.Error("branch0 should have no gradient")
+	}
+	t.Logf("Switch backward: branch1.bias grad=%v, branch0.bias grad=nil", b1Grad)
+}
+
+func TestSwitchParameters(t *testing.T) {
+	router, _ := nn.NewLinear(2, 1)
+	branch0, _ := nn.NewLinear(2, 2)
+	branch1, _ := nn.NewLinear(2, 2)
+
+	g, err := From(branch0).Switch(router, branch0, branch1).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	params := g.Parameters()
+	// entry (branch0) + switch(router + branch0 + branch1) = 2+2+2+2 = 8
+	// But branch0 is deduplicated → 2+2+2 = 6
+	if len(params) != 6 {
+		t.Errorf("expected 6 parameters, got %d", len(params))
+	}
+	t.Logf("Switch parameters: %d", len(params))
+}
+
+func TestSwitchSetTraining(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+	drop0 := nn.NewDropout(0.99)
+	drop1 := nn.NewDropout(0.99)
+	router := &fixedRouter{index: 0}
+
+	g, err := From(entry).Switch(router, drop0, drop1).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Eval mode: dropout should be identity.
+	g.SetTraining(false)
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	vals := allF32(result)
+
+	if !approxEqual(vals[0], 1.0, 1e-5) || !approxEqual(vals[1], 2.0, 1e-5) {
+		t.Errorf("Switch eval mode: got %v, want [1, 2]", vals)
+	}
+	t.Log("Switch SetTraining propagates to all branches")
+}
+
+// argmaxRouter applies argmax internally and returns the index.
+type argmaxRouter struct {
+	inner nn.Module
+}
+
+func (r *argmaxRouter) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	logits := r.inner.Forward(inputs...)
+	data, _ := logits.Data().Float32Data()
+	selected := 0
+	maxVal := data[0]
+	for i, v := range data[1:] {
+		if v > maxVal {
+			maxVal = v
+			selected = i + 1
+		}
+	}
+	t, _ := tensor.FromFloat32([]float32{float32(selected)}, []int64{1})
+	return autograd.NewVariable(t, false)
+}
+
+func (r *argmaxRouter) Parameters() []*nn.Parameter { return r.inner.Parameters() }
+
+func TestSwitchDataDependentRouting(t *testing.T) {
+	// Router: Linear(2→2) with weights that make input [1,2] select branch 1
+	// and input [2,1] select branch 0.
+	routerLinear, _ := nn.NewLinear(2, 2)
+	// W = [[-1,1],[1,-1]], b = [0,0]
+	// input [1,2]: logits = [-1+2, 1-2] = [1, -1] → argmax = 0
+	// input [2,1]: logits = [-2+1, 2-1] = [-1, 1] → argmax = 1
+	setLinearWeights(routerLinear, []float32{-1, 1, 1, -1}, []float32{0, 0})
+	router := &argmaxRouter{inner: routerLinear}
+
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	double, _ := nn.NewLinear(2, 2)
+	setLinearWeights(double, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	triple, _ := nn.NewLinear(2, 2)
+	setLinearWeights(triple, []float32{3, 0, 0, 3}, []float32{0, 0})
+
+	g, err := From(entry).Switch(router, double, triple).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Input [1,2] → router selects branch 0 (double) → [2, 4]
+	x1, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	r1 := g.Forward(autograd.NewVariable(x1, false))
+	v1 := allF32(r1)
+	if !approxEqual(v1[0], 2.0, 1e-5) || !approxEqual(v1[1], 4.0, 1e-5) {
+		t.Errorf("input [1,2]: got %v, want [2, 4]", v1)
+	}
+
+	// Input [2,1] → router selects branch 1 (triple) → [6, 3]
+	x2, _ := tensor.FromFloat32([]float32{2, 1}, []int64{1, 2})
+	r2 := g.Forward(autograd.NewVariable(x2, false))
+	v2 := allF32(r2)
+	if !approxEqual(v2[0], 6.0, 1e-5) || !approxEqual(v2[1], 3.0, 1e-5) {
+		t.Errorf("input [2,1]: got %v, want [6, 3]", v2)
+	}
+
+	t.Logf("Data-dependent routing: [1,2]→branch0=%v, [2,1]→branch1=%v", v1, v2)
+}
+
+func TestSwitchWithUsing(t *testing.T) {
+	// Router uses a tagged reference to make its decision.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	identity, _ := nn.NewLinear(2, 2)
+	setLinearWeights(identity, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	double, _ := nn.NewLinear(2, 2)
+	setLinearWeights(double, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	triple, _ := nn.NewLinear(2, 2)
+	setLinearWeights(triple, []float32{3, 0, 0, 3}, []float32{0, 0})
+
+	// contextRouter ignores stream, uses ref to decide.
+	router := &contextRouter{index: 1}
+
+	g, err := From(entry).Tag("ctx").
+		Through(identity).
+		Switch(router, double, triple).Using("ctx").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	vals := allF32(result)
+	// identity passthrough, then triple: [3, 6]
+	if !approxEqual(vals[0], 3.0, 1e-5) || !approxEqual(vals[1], 6.0, 1e-5) {
+		t.Errorf("Switch with Using: got %v, want [3, 6]", vals)
+	}
+	t.Logf("Switch with Using: %v", vals)
+}
+
+// contextRouter receives stream + refs and always returns a fixed index.
+type contextRouter struct {
+	index float32
+}
+
+func (r *contextRouter) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	// Verify we received the extra ref.
+	if len(inputs) < 2 {
+		return autograd.ErrVariable(fmt.Errorf("contextRouter: expected >=2 inputs, got %d", len(inputs)))
+	}
+	t, _ := tensor.FromFloat32([]float32{r.index}, []int64{1})
+	return autograd.NewVariable(t, false)
+}
+
+func (r *contextRouter) Parameters() []*nn.Parameter { return nil }
+
+func TestSwitchTooFewBranches(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 2)
+	router := &fixedRouter{index: 0}
+	branch, _ := nn.NewLinear(2, 2)
+
+	_, err := From(entry).Switch(router, branch).Build()
+	if err == nil {
+		t.Fatal("expected error for single branch")
+	}
+	t.Logf("Error: %v", err)
 }

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/goDl.png" alt="goDl" width="320">
+</p>
+
 # goDl
 
 A Go-native deep learning framework built from first principles on top of

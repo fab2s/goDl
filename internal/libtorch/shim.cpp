@@ -386,6 +386,206 @@ extern "C" char* godl_max_dim(TorchTensor t, int dim, int keepdim,
     }
 }
 
+extern "C" char* godl_softmax(TorchTensor t, int dim, TorchTensor* result) {
+    try {
+        *result = wrap(torch::softmax(unwrap(t), dim));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_select(TorchTensor t, int dim, int64_t index,
+                              TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t).select(dim, index).contiguous());
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_zeros_like(TorchTensor t, TorchTensor* result) {
+    try {
+        *result = wrap(torch::zeros_like(unwrap(t)));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_select_scatter(TorchTensor input, TorchTensor src,
+                                      int dim, int64_t index,
+                                      TorchTensor* result) {
+    try {
+        auto out = unwrap(input).clone();
+        out.select(dim, index).copy_(unwrap(src));
+        *result = wrap(out);
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+// --- Slicing and concatenation ---
+
+extern "C" char* godl_narrow(TorchTensor t, int dim, int64_t start,
+                              int64_t length, TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t).narrow(dim, start, length).contiguous());
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_narrow_scatter(TorchTensor input, TorchTensor src,
+                                      int dim, int64_t start,
+                                      TorchTensor* result) {
+    try {
+        auto out = unwrap(input).clone();
+        out.narrow(dim, start, unwrap(src).size(dim)).copy_(unwrap(src));
+        *result = wrap(out);
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_cat2(TorchTensor a, TorchTensor b, int dim,
+                            TorchTensor* result) {
+    try {
+        *result = wrap(torch::cat({unwrap(a), unwrap(b)}, dim));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+// --- Reduction ---
+
+extern "C" char* godl_mean_dim(TorchTensor t, int dim, int keepdim,
+                                TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t).mean(dim, keepdim != 0));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+// --- Indexing ---
+
+extern "C" char* godl_index_select(TorchTensor t, int dim, TorchTensor index,
+                                    TorchTensor* result) {
+    try {
+        *result = wrap(torch::index_select(unwrap(t), dim, unwrap(index)));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_index_add(TorchTensor t, int dim, TorchTensor index,
+                                 TorchTensor src, TorchTensor* result) {
+    try {
+        // Out-of-place: returns t with src scattered at index positions.
+        *result = wrap(unwrap(t).index_add(dim, unwrap(index), unwrap(src)));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+// --- Element-wise math ---
+
+extern "C" char* godl_sqrt(TorchTensor t, TorchTensor* result) {
+    try {
+        *result = wrap(torch::sqrt(unwrap(t)));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_div(TorchTensor a, TorchTensor b, TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(a) / unwrap(b));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+// --- Convolution ---
+
+extern "C" char* godl_conv2d(TorchTensor input, TorchTensor weight,
+                              TorchTensor bias,
+                              int64_t* stride, int64_t* padding,
+                              int64_t* dilation,
+                              int64_t groups, TorchTensor* result) {
+    try {
+        auto in = unwrap(input);
+        auto w = unwrap(weight);
+        c10::optional<torch::Tensor> b;
+        if (bias != nullptr) {
+            b = unwrap(bias);
+        }
+        *result = wrap(torch::conv2d(in, w, b,
+            torch::IntArrayRef(stride, 2),
+            torch::IntArrayRef(padding, 2),
+            torch::IntArrayRef(dilation, 2),
+            groups));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_conv2d_backward(TorchTensor grad_output, TorchTensor input,
+                                       TorchTensor weight,
+                                       int64_t* stride, int64_t* padding,
+                                       int64_t* dilation,
+                                       int64_t groups, int compute_bias,
+                                       TorchTensor* grad_input,
+                                       TorchTensor* grad_weight,
+                                       TorchTensor* grad_bias) {
+    try {
+        auto go_ = unwrap(grad_output);
+        auto in = unwrap(input);
+        auto w = unwrap(weight);
+
+        c10::OptionalIntArrayRef bias_sizes = c10::nullopt;
+        std::vector<int64_t> bias_sizes_vec;
+        if (compute_bias) {
+            bias_sizes_vec = {w.size(0)};
+            bias_sizes = bias_sizes_vec;
+        }
+
+        std::vector<int64_t> output_padding = {0, 0};
+        auto result = at::convolution_backward(
+            go_, in, w,
+            bias_sizes,
+            torch::IntArrayRef(stride, 2),
+            torch::IntArrayRef(padding, 2),
+            torch::IntArrayRef(dilation, 2),
+            false, // transposed
+            output_padding,
+            groups,
+            {true, true, compute_bias != 0}
+        );
+
+        *grad_input = wrap(std::get<0>(result));
+        *grad_weight = wrap(std::get<1>(result));
+        if (compute_bias) {
+            *grad_bias = wrap(std::get<2>(result));
+        }
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
 // --- Device operations ---
 
 extern "C" char* godl_to_device(TorchTensor t, int device,

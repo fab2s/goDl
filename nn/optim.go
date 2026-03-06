@@ -79,14 +79,17 @@ func (o *SGD) ZeroGrad() {
 // Adam implements the Adam optimizer (Kingma & Ba, 2014).
 //
 //	optimizer := nn.NewAdam(model.Parameters(), 0.001)
+//	loss.Backward()
+//	optimizer.Step()
+//	optimizer.ZeroGrad()
 type Adam struct {
 	params []*Parameter
 	lr     float64
 	beta1  float64
 	beta2  float64
 	eps    float64
-	m      []*tensor.Tensor // first moment (mean)
-	v      []*tensor.Tensor // second moment (variance)
+	m      []*tensor.Tensor // first moment (mean of gradients)
+	v      []*tensor.Tensor // second moment (mean of squared gradients)
 	t      int              // step counter
 }
 
@@ -109,11 +112,6 @@ func NewAdam(params []*Parameter, lr float64) *Adam {
 // m_hat = m / (1-β1^t)
 // v_hat = v / (1-β2^t)
 // param -= lr * m_hat / (sqrt(v_hat) + eps)
-//
-// Since we don't have element-wise sqrt or division yet, we implement
-// the update using available ops: mul_scalar, add, sub, mul.
-// sqrt(v_hat) + eps ≈ (v_hat + eps²)^0.5 — we approximate using
-// exp(0.5 * log(v_hat + eps)) for numerical correctness.
 func (a *Adam) Step() {
 	a.t++
 	for i, p := range a.params {
@@ -121,49 +119,38 @@ func (a *Adam) Step() {
 		if grad == nil {
 			continue
 		}
-
-		// Initialize moments to zeros on first step
-		if a.m[i] == nil {
-			zeros, err := tensor.Zeros(grad.Shape(), tensor.WithDType(grad.DType()))
-			if err != nil {
-				continue
-			}
-			a.m[i] = zeros
-			zeros2, err := tensor.Zeros(grad.Shape(), tensor.WithDType(grad.DType()))
-			if err != nil {
-				continue
-			}
-			a.v[i] = zeros2
-		}
-
-		// m = β1*m + (1-β1)*grad
-		a.m[i] = a.m[i].MulScalar(a.beta1).Add(grad.MulScalar(1 - a.beta1))
-
-		// v = β2*v + (1-β2)*grad²
-		gradSq := grad.Mul(grad)
-		a.v[i] = a.v[i].MulScalar(a.beta2).Add(gradSq.MulScalar(1 - a.beta2))
-
-		// Bias correction
-		bc1 := 1.0 / (1.0 - pow(a.beta1, a.t))
-		bc2 := 1.0 / (1.0 - pow(a.beta2, a.t))
-		mHat := a.m[i].MulScalar(bc1)
-		vHat := a.v[i].MulScalar(bc2)
-
-		// param -= lr * mHat / (sqrt(vHat) + eps)
-		// sqrt(vHat) + eps = exp(0.5 * log(vHat + eps)) approximately
-		// For safety: vHat is always >= 0, add eps before log
-		sqrtV := vHat.AddScalar(a.eps).Log().MulScalar(0.5).Exp()
-
-		// mHat / sqrtV — we don't have division, so use: mHat * (1/sqrtV)
-		// 1/sqrtV = exp(-log(sqrtV)) = exp(-0.5*log(vHat+eps))
-		invSqrtV := vHat.AddScalar(a.eps).Log().MulScalar(-0.5).Exp()
-		update := mHat.Mul(invSqrtV).MulScalar(a.lr)
-
-		_ = sqrtV // used only for clarity above
-
-		newData := p.Data().Sub(update)
-		p.SetData(newData)
+		a.adamUpdate(i, p, grad, 0)
 	}
+}
+
+// adamUpdate applies the Adam update for a single parameter.
+// weightDecay > 0 applies decoupled weight decay (AdamW).
+func (a *Adam) adamUpdate(i int, p *Parameter, grad *tensor.Tensor, weightDecay float64) {
+	if a.m[i] == nil {
+		a.m[i] = grad.ZerosLike()
+		a.v[i] = grad.ZerosLike()
+	}
+
+	// m = β1*m + (1-β1)*grad
+	a.m[i] = a.m[i].MulScalar(a.beta1).Add(grad.MulScalar(1 - a.beta1))
+
+	// v = β2*v + (1-β2)*grad²
+	a.v[i] = a.v[i].MulScalar(a.beta2).Add(grad.Mul(grad).MulScalar(1 - a.beta2))
+
+	// Bias correction
+	mHat := a.m[i].MulScalar(1.0 / (1.0 - pow(a.beta1, a.t)))
+	vHat := a.v[i].MulScalar(1.0 / (1.0 - pow(a.beta2, a.t)))
+
+	// param -= lr * mHat / (sqrt(vHat) + eps)
+	update := mHat.Div(vHat.Sqrt().AddScalar(a.eps)).MulScalar(a.lr)
+	newData := p.Data().Sub(update)
+
+	// Decoupled weight decay: param -= lr * wd * param
+	if weightDecay > 0 {
+		newData = newData.Sub(p.Data().MulScalar(a.lr * weightDecay))
+	}
+
+	p.SetData(newData)
 }
 
 // ZeroGrad resets all parameter gradients.
@@ -171,6 +158,52 @@ func (a *Adam) ZeroGrad() {
 	for _, p := range a.params {
 		p.ZeroGrad()
 	}
+}
+
+// --- AdamW ---
+
+// AdamW implements Adam with decoupled weight decay (Loshchilov & Hutter, 2017).
+// Unlike L2 regularization, decoupled weight decay is applied directly to the
+// parameters, not to the gradient. This distinction matters for adaptive
+// optimizers and generally improves generalization.
+//
+//	optimizer := nn.NewAdamW(model.Parameters(), 0.001, 0.01)
+type AdamW struct {
+	adam        Adam
+	weightDecay float64
+}
+
+// NewAdamW creates an AdamW optimizer. weightDecay is typically 0.01.
+func NewAdamW(params []*Parameter, lr, weightDecay float64) *AdamW {
+	return &AdamW{
+		adam: Adam{
+			params: params,
+			lr:     lr,
+			beta1:  0.9,
+			beta2:  0.999,
+			eps:    1e-8,
+			m:      make([]*tensor.Tensor, len(params)),
+			v:      make([]*tensor.Tensor, len(params)),
+		},
+		weightDecay: weightDecay,
+	}
+}
+
+// Step applies one AdamW update.
+func (w *AdamW) Step() {
+	w.adam.t++
+	for i, p := range w.adam.params {
+		grad := p.Grad()
+		if grad == nil {
+			continue
+		}
+		w.adam.adamUpdate(i, p, grad, w.weightDecay)
+	}
+}
+
+// ZeroGrad resets all parameter gradients.
+func (w *AdamW) ZeroGrad() {
+	w.adam.ZeroGrad()
 }
 
 // pow computes base^exp for small integer exponents.

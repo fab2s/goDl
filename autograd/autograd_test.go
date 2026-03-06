@@ -369,6 +369,100 @@ func TestBroadcastAddBackward(t *testing.T) {
 	assertClose(t, "db", mustData(t, b.Grad()), []float32{2, 2, 2})
 }
 
+// --- Narrow ---
+
+func TestNarrowForward(t *testing.T) {
+	// x = [1, 2, 3, 4, 5]
+	// narrow(dim=0, start=1, length=3) = [2, 3, 4]
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5}, []int64{5})
+	defer xt.Release()
+
+	x := autograd.NewVariable(xt, false)
+	out := x.Narrow(0, 1, 3)
+	assertClose(t, "narrow", mustData(t, out.Data()), []float32{2, 3, 4})
+}
+
+func TestNarrowBackward(t *testing.T) {
+	// x [2, 4], narrow(dim=1, start=1, length=2) → [2, 2]
+	// loss = sum(narrow) → grad at positions [1:3] = 1, rest = 0
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6, 7, 8}, []int64{2, 4})
+	defer xt.Release()
+
+	x := autograd.NewVariable(xt, true)
+	loss := x.Narrow(1, 1, 2).Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatalf("backward: %v", err)
+	}
+	assertClose(t, "dx", mustData(t, x.Grad()), []float32{0, 1, 1, 0, 0, 1, 1, 0})
+}
+
+// --- Cat ---
+
+func TestCatForward(t *testing.T) {
+	at, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3})
+	defer at.Release()
+	bt, _ := tensor.FromFloat32([]float32{4, 5}, []int64{1, 2})
+	defer bt.Release()
+
+	a := autograd.NewVariable(at, false)
+	b := autograd.NewVariable(bt, false)
+
+	out := a.Cat(b, 1)
+	assertClose(t, "cat", mustData(t, out.Data()), []float32{1, 2, 3, 4, 5})
+	shape := out.Data().Shape()
+	if shape[0] != 1 || shape[1] != 5 {
+		t.Errorf("shape = %v, want [1 5]", shape)
+	}
+}
+
+func TestCatBackward(t *testing.T) {
+	// cat([a, b], dim=1), loss = sum
+	// grad should split correctly
+	at, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	defer at.Release()
+	bt, _ := tensor.FromFloat32([]float32{7, 8, 9, 10}, []int64{2, 2})
+	defer bt.Release()
+
+	a := autograd.NewVariable(at, true)
+	b := autograd.NewVariable(bt, true)
+
+	loss := a.Cat(b, 1).Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatalf("backward: %v", err)
+	}
+
+	// All elements contribute equally → all grads = 1
+	assertClose(t, "da", mustData(t, a.Grad()), []float32{1, 1, 1, 1, 1, 1})
+	assertClose(t, "db", mustData(t, b.Grad()), []float32{1, 1, 1, 1})
+}
+
+func TestCatNarrowRoundtrip(t *testing.T) {
+	// Cat two tensors, then narrow back → should recover originals
+	at, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3})
+	defer at.Release()
+	bt, _ := tensor.FromFloat32([]float32{4, 5}, []int64{1, 2})
+	defer bt.Release()
+
+	a := autograd.NewVariable(at, true)
+	b := autograd.NewVariable(bt, true)
+
+	catted := a.Cat(b, 1)
+	// Narrow back: recover a and b
+	aBack := catted.Narrow(1, 0, 3)
+	bBack := catted.Narrow(1, 3, 2)
+
+	assertClose(t, "a roundtrip", mustData(t, aBack.Data()), []float32{1, 2, 3})
+	assertClose(t, "b roundtrip", mustData(t, bBack.Data()), []float32{4, 5})
+
+	// Backward through the roundtrip
+	loss := aBack.Sum().Add(bBack.MulScalar(2).Sum())
+	if err := loss.Backward(); err != nil {
+		t.Fatalf("backward: %v", err)
+	}
+	assertClose(t, "da", mustData(t, a.Grad()), []float32{1, 1, 1})
+	assertClose(t, "db", mustData(t, b.Grad()), []float32{2, 2})
+}
+
 // --- MulScalar ---
 
 func TestMulScalarBackward(t *testing.T) {
@@ -384,4 +478,113 @@ func TestMulScalarBackward(t *testing.T) {
 	}
 
 	assertClose(t, "dx", mustData(t, x.Grad()), []float32{3, 3, 3})
+}
+
+// --- MeanDim ---
+
+func TestMeanDimForward(t *testing.T) {
+	// x = [[1, 2, 3], [4, 5, 6]]  shape [2, 3]
+	// mean(dim=1) = [2, 5]
+	// mean(dim=0) = [2.5, 3.5, 4.5]
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	defer xt.Release()
+
+	x := autograd.NewVariable(xt, false)
+
+	m1 := x.MeanDim(1, false)
+	assertClose(t, "mean(dim=1)", mustData(t, m1.Data()), []float32{2, 5})
+
+	m0 := x.MeanDim(0, false)
+	assertClose(t, "mean(dim=0)", mustData(t, m0.Data()), []float32{2.5, 3.5, 4.5})
+
+	// keepdim=true
+	mk := x.MeanDim(1, true)
+	shape := mk.Data().Shape()
+	if shape[0] != 2 || shape[1] != 1 {
+		t.Errorf("keepdim shape = %v, want [2 1]", shape)
+	}
+}
+
+func TestMeanDimBackward(t *testing.T) {
+	// x [2, 3], loss = sum(mean(x, dim=1))
+	// mean(dim=1) reduces 3→1, so grad = 1/3 for each element
+	// dL/d(mean) = [1, 1], dL/dx = [[1/3, 1/3, 1/3], [1/3, 1/3, 1/3]]
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	defer xt.Release()
+
+	x := autograd.NewVariable(xt, true)
+	loss := x.MeanDim(1, false).Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatalf("backward: %v", err)
+	}
+
+	want := make([]float32, 6)
+	for i := range want {
+		want[i] = 1.0 / 3.0
+	}
+	assertClose(t, "dx", mustData(t, x.Grad()), want)
+}
+
+func TestMeanDimKeepDimBackward(t *testing.T) {
+	// Same test with keepdim=true — should produce identical gradients
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	defer xt.Release()
+
+	x := autograd.NewVariable(xt, true)
+	loss := x.MeanDim(1, true).Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatalf("backward: %v", err)
+	}
+
+	want := make([]float32, 6)
+	for i := range want {
+		want[i] = 1.0 / 3.0
+	}
+	assertClose(t, "dx", mustData(t, x.Grad()), want)
+}
+
+// --- IndexSelect ---
+
+func TestIndexSelectForward(t *testing.T) {
+	// weight = [[10, 11], [20, 21], [30, 31], [40, 41]]  shape [4, 2]
+	// indices = [2, 0, 3]
+	// result = [[30, 31], [10, 11], [40, 41]]  shape [3, 2]
+	wt, _ := tensor.FromFloat32([]float32{10, 11, 20, 21, 30, 31, 40, 41}, []int64{4, 2})
+	defer wt.Release()
+	idx, _ := tensor.FromInt64([]int64{2, 0, 3}, []int64{3})
+	defer idx.Release()
+
+	w := autograd.NewVariable(wt, false)
+	out := w.IndexSelect(0, idx)
+	if err := out.Data().Err(); err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+
+	shape := out.Data().Shape()
+	if shape[0] != 3 || shape[1] != 2 {
+		t.Errorf("shape = %v, want [3 2]", shape)
+	}
+	assertClose(t, "values", mustData(t, out.Data()), []float32{30, 31, 10, 11, 40, 41})
+}
+
+func TestIndexSelectBackward(t *testing.T) {
+	// weight [4, 2], select indices [1, 1, 3] → output [3, 2]
+	// loss = sum(output)
+	// grad_output = ones [3, 2]
+	// grad_weight: row 1 gets 2 contributions (index 1 appears twice),
+	//              row 3 gets 1 contribution
+	//              rows 0, 2 get 0
+	wt, _ := tensor.FromFloat32([]float32{10, 11, 20, 21, 30, 31, 40, 41}, []int64{4, 2})
+	defer wt.Release()
+	idx, _ := tensor.FromInt64([]int64{1, 1, 3}, []int64{3})
+	defer idx.Release()
+
+	w := autograd.NewVariable(wt, true)
+	loss := w.IndexSelect(0, idx).Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatalf("backward: %v", err)
+	}
+
+	// grad_weight: row 0 = [0,0], row 1 = [2,2], row 2 = [0,0], row 3 = [1,1]
+	assertClose(t, "dw", mustData(t, w.Grad()), []float32{0, 0, 2, 2, 0, 0, 1, 1})
 }

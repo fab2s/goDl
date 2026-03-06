@@ -453,6 +453,234 @@ func (v *Variable) Reshape(shape []int64) *Variable {
 	return newVar(result, fn)
 }
 
+// Softmax applies softmax along a dimension.
+// Backward: grad_input = output * (grad - sum(grad * output, dim, keepdim=true)).
+func (v *Variable) Softmax(dim int) *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.Softmax(dim)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if v.requiresGrad {
+		output := result
+		fn = &gradFn{
+			name:   "SoftmaxBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				gy := grad.Mul(output)
+				sumGy := gy.SumDim(dim, true)
+				return []*tensor.Tensor{output.Mul(grad.Sub(sumGy))}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
+// Select picks a single index along a dimension, removing that dimension.
+// Backward: gradient is embedded back into the original shape at the selected index.
+func (v *Variable) Select(dim int, index int64) *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.Select(dim, index)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if v.requiresGrad {
+		inputData := v.data
+		fn = &gradFn{
+			name:   "SelectBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				zeros := inputData.ZerosLike()
+				return []*tensor.Tensor{zeros.SelectScatter(grad, dim, index)}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
+// Narrow extracts a slice along dim: v[dim, start:start+length].
+// Backward: gradient is placed back at the original position in a zeros tensor.
+func (v *Variable) Narrow(dim int, start, length int64) *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.Narrow(dim, start, length)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if v.requiresGrad {
+		inputData := v.data
+		fn = &gradFn{
+			name:   "NarrowBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				zeros := inputData.ZerosLike()
+				return []*tensor.Tensor{zeros.NarrowScatter(grad, dim, start)}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
+// Cat concatenates v and other along dim.
+// Backward: gradient is split and routed to each input.
+func (v *Variable) Cat(other *Variable, dim int) *Variable {
+	if !v.valid() {
+		return v
+	}
+	if !other.valid() {
+		return other
+	}
+	result := v.data.Cat(other.data, dim)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if needsGrad(v, other) {
+		vSize := v.data.Shape()[dim]
+		otherSize := other.data.Shape()[dim]
+		fn = &gradFn{
+			name:   "CatBackward",
+			inputs: []*Variable{v, other},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				gradV := grad.Narrow(dim, 0, vSize)
+				gradOther := grad.Narrow(dim, vSize, otherSize)
+				return []*tensor.Tensor{gradV, gradOther}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
+// MeanDim computes the mean along a single dimension.
+// Backward: grad_input = gradOutput / dim_size, expanded to input shape.
+func (v *Variable) MeanDim(dim int, keepdim bool) *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.MeanDim(dim, keepdim)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if v.requiresGrad {
+		inputData := v.data
+		fn = &gradFn{
+			name:   "MeanDimBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				dimSize := float64(inputData.Shape()[dim])
+				g := grad
+				if !keepdim {
+					// Restore the reduced dimension for broadcasting.
+					gradShape := g.Shape()
+					newShape := make([]int64, len(gradShape)+1)
+					copy(newShape[:dim], gradShape[:dim])
+					newShape[dim] = 1
+					copy(newShape[dim+1:], gradShape[dim:])
+					g = g.Reshape(newShape)
+				}
+				// Broadcast to input shape and divide by dim size.
+				return []*tensor.Tensor{inputData.OnesLike().Mul(g).MulScalar(1.0 / dimSize)}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
+// IndexSelect gathers slices along dim at the given indices.
+// Only the source tensor gets gradients (indices are not differentiable).
+// Backward: grad_input = zeros.index_add(dim, index, grad_output).
+func (v *Variable) IndexSelect(dim int, index *tensor.Tensor) *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.IndexSelect(dim, index)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if v.requiresGrad {
+		inputData := v.data
+		fn = &gradFn{
+			name:   "IndexSelectBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				// Scatter gradients back to the positions they came from.
+				zeros := inputData.ZerosLike()
+				return []*tensor.Tensor{zeros.IndexAdd(dim, index, grad)}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
+// Sqrt returns element-wise square root.
+// Backward: grad_input = gradOutput / (2 * sqrt(input)).
+func (v *Variable) Sqrt() *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.Sqrt()
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if v.requiresGrad {
+		output := result
+		fn = &gradFn{
+			name:   "SqrtBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				// d/dx sqrt(x) = 1 / (2*sqrt(x)) = 0.5 / sqrt(x)
+				return []*tensor.Tensor{grad.Div(output.MulScalar(2))}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
+// Div returns element-wise division v / other.
+// Backward: grad_v = gradOutput / other, grad_other = -gradOutput * v / other².
+func (v *Variable) Div(other *Variable) *Variable {
+	if !v.valid() {
+		return v
+	}
+	if !other.valid() {
+		return other
+	}
+	result := v.data.Div(other.data)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if needsGrad(v, other) {
+		vShape := v.data.Shape()
+		otherShape := other.data.Shape()
+		vData := v.data
+		otherData := other.data
+		fn = &gradFn{
+			name:   "DivBackward",
+			inputs: []*Variable{v, other},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				// grad_v = grad / other
+				gradV := unbroadcast(grad.Div(otherData), vShape)
+				// grad_other = -grad * v / other²
+				gradOther := unbroadcast(grad.Neg().Mul(vData).Div(otherData.Mul(otherData)), otherShape)
+				return []*tensor.Tensor{gradV, gradOther}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
 // --- Broadcast gradient reduction ---
 
 // unbroadcast reduces a gradient tensor to match the original input shape.
@@ -486,6 +714,61 @@ func unbroadcast(grad *tensor.Tensor, targetShape []int64) *tensor.Tensor {
 	}
 
 	return result
+}
+
+// --- Convolution ---
+
+// Conv2d applies a 2D convolution. bias may be nil.
+// Input shape: [N, C_in, H, W]. Weight shape: [C_out, C_in/groups, kH, kW].
+func (v *Variable) Conv2d(weight, bias *Variable, stride, padding, dilation []int64, groups int64) *Variable {
+	if !v.valid() {
+		return v
+	}
+	if !weight.valid() {
+		return weight
+	}
+	if bias != nil && !bias.valid() {
+		return bias
+	}
+
+	// Forward.
+	var biasT *tensor.Tensor
+	if bias != nil {
+		biasT = bias.data
+	}
+	result := v.data.Conv2d(weight.data, biasT, stride, padding, dilation, groups)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+
+	// Backward.
+	inputs := []*Variable{v, weight}
+	hasBias := bias != nil
+	if hasBias {
+		inputs = append(inputs, bias)
+	}
+
+	var fn *gradFn
+	if needsGrad(inputs...) {
+		savedInput := v.data
+		savedWeight := weight.data
+		fn = &gradFn{
+			name:   "Conv2dBackward",
+			inputs: inputs,
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				gi, gw, gb := tensor.Conv2dBackward(
+					grad, savedInput, savedWeight,
+					stride, padding, dilation, groups, hasBias,
+				)
+				grads := []*tensor.Tensor{gi, gw}
+				if hasBias {
+					grads = append(grads, gb)
+				}
+				return grads
+			},
+		}
+	}
+	return newVar(result, fn)
 }
 
 func shapesEqual(a, b []int64) bool {

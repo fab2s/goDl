@@ -86,6 +86,52 @@ char* godl_randn(int64_t* shape, int ndim, int dtype, int device,
 char* godl_add_scalar(TorchTensor t, double scalar, TorchTensor* result);
 char* godl_neg(TorchTensor t, TorchTensor* result);
 char* godl_max_dim(TorchTensor t, int dim, int keepdim, TorchTensor* result);
+char* godl_softmax(TorchTensor t, int dim, TorchTensor* result);
+char* godl_select(TorchTensor t, int dim, int64_t index, TorchTensor* result);
+char* godl_zeros_like(TorchTensor t, TorchTensor* result);
+char* godl_select_scatter(TorchTensor input, TorchTensor src, int dim,
+                          int64_t index, TorchTensor* result);
+
+// --- Reduction ---
+
+char* godl_mean_dim(TorchTensor t, int dim, int keepdim, TorchTensor* result);
+
+// --- Indexing ---
+
+char* godl_index_select(TorchTensor t, int dim, TorchTensor index,
+                        TorchTensor* result);
+char* godl_index_add(TorchTensor t, int dim, TorchTensor index,
+                     TorchTensor src, TorchTensor* result);
+
+// --- Slicing and concatenation ---
+
+char* godl_narrow(TorchTensor t, int dim, int64_t start, int64_t length,
+                  TorchTensor* result);
+char* godl_narrow_scatter(TorchTensor input, TorchTensor src, int dim,
+                          int64_t start, TorchTensor* result);
+char* godl_cat2(TorchTensor a, TorchTensor b, int dim, TorchTensor* result);
+
+// --- Element-wise math ---
+
+char* godl_sqrt(TorchTensor t, TorchTensor* result);
+char* godl_div(TorchTensor a, TorchTensor b, TorchTensor* result);
+
+// --- Convolution ---
+
+// 2D convolution forward.
+// bias may be NULL for no bias. stride/padding/dilation are 2-element arrays.
+char* godl_conv2d(TorchTensor input, TorchTensor weight, TorchTensor bias,
+                  int64_t* stride, int64_t* padding, int64_t* dilation,
+                  int64_t groups, TorchTensor* result);
+
+// 2D convolution backward. Computes gradients for input, weight, and optionally bias.
+// Out-pointers for disabled gradients (compute_*=0) are not written.
+char* godl_conv2d_backward(TorchTensor grad_output, TorchTensor input,
+                           TorchTensor weight,
+                           int64_t* stride, int64_t* padding, int64_t* dilation,
+                           int64_t groups, int compute_bias,
+                           TorchTensor* grad_input, TorchTensor* grad_weight,
+                           TorchTensor* grad_bias);
 
 // --- Device operations ---
 

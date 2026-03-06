@@ -169,6 +169,17 @@ func FromFloat64(data []float64, shape []int64, opts ...Option) (*Tensor, error)
 	return wrap(raw), nil
 }
 
+// FromInt64 creates an Int64 tensor from a Go slice. Data is copied.
+// Useful for index tensors (e.g., Embedding lookups).
+func FromInt64(data []int64, shape []int64, opts ...Option) (*Tensor, error) {
+	o := applyOptions(opts)
+	raw, err := libtorch.FromInt64(data, shape, o.device.toLibtorch())
+	if err != nil {
+		return nil, err
+	}
+	return wrap(raw), nil
+}
+
 // --- Metadata ---
 
 // Shape returns the full shape as a slice.

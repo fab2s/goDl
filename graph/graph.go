@@ -41,6 +41,18 @@ type exposedPort struct {
 	port   string // which port on that node
 }
 
+// stateEntry holds a forward-reference state buffer. When Using appears
+// before Tag in the flow, the state carries between Forward() calls —
+// enabling recurrent connections inside loops and persistent state
+// across training steps.
+type stateEntry struct {
+	name       string
+	readerID   string             // state_read node that outputs this value
+	writerID   string             // node whose output populates the buffer
+	writerPort string             // which output port to capture
+	value      *autograd.Variable // current state (nil until first write)
+}
+
 // Graph is a composition of connected Nodes. It implements nn.Module,
 // enabling Graph-as-Module composition — a graph can be a node in
 // a parent graph.
@@ -56,6 +68,7 @@ type Graph struct {
 	order     []*Node            // flat topological order (for Parameters)
 	levels    [][]*Node          // grouped by execution level (for parallel Forward)
 	edgesFrom map[string][]*Edge // edges grouped by source node for fast routing
+	state     []*stateEntry      // forward-reference state buffers
 }
 
 // Forward executes the graph, routing variables along edges between nodes.
@@ -133,6 +146,7 @@ func (g *Graph) executeLevel(
 		}
 		nodeOutputs[node.id] = results[i]
 		g.routeOutputs(node, results[i], slots)
+		g.captureState(node, results[i])
 	}
 	return nil
 }
@@ -149,6 +163,7 @@ func (g *Graph) executeAndRoute(
 	}
 	nodeOutputs[node.id] = outs
 	g.routeOutputs(node, outs, slots)
+	g.captureState(node, outs)
 	return nil
 }
 
@@ -184,6 +199,46 @@ func (g *Graph) Parameters() []*nn.Parameter {
 		}
 	}
 	return params
+}
+
+// captureState stores a node's output into any state buffer it writes to.
+func (g *Graph) captureState(node *Node, outs []*autograd.Variable) {
+	for _, s := range g.state {
+		if s.writerID == node.id {
+			idx := portIndex(node.outputPorts, s.writerPort)
+			s.value = outs[idx]
+		}
+	}
+}
+
+// SetTraining propagates training mode to all modules in the graph.
+// Modules that implement nn.TrainToggler (e.g., Dropout, BatchNorm)
+// will switch behavior. Nested graphs propagate recursively.
+func (g *Graph) SetTraining(training bool) {
+	for _, node := range g.order {
+		if node.module == nil {
+			continue
+		}
+		nn.SetTraining(node.module, training)
+	}
+}
+
+// ResetState clears all forward-reference state buffers to nil.
+// Call this when starting inference on a new sequence.
+func (g *Graph) ResetState() {
+	for _, s := range g.state {
+		s.value = nil
+	}
+}
+
+// DetachState breaks the gradient chain on all state buffers.
+// Call this between training steps to prevent unbounded graph growth.
+func (g *Graph) DetachState() {
+	for _, s := range g.state {
+		if s.value != nil {
+			s.value = autograd.NewVariable(s.value.Data(), false)
+		}
+	}
 }
 
 // topologicalLevels groups nodes by execution level using Kahn's algorithm.
@@ -251,7 +306,7 @@ func topologicalLevels(nodes map[string]*Node, edges []*Edge) ([][]*Node, error)
 }
 
 // buildGraph validates and finalizes a graph from its components.
-func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposedPort) (*Graph, error) {
+func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposedPort, fwdRefs []forwardRef) (*Graph, error) {
 	// Validate edges reference valid nodes and ports.
 	for _, edge := range edges {
 		fromNode, ok := nodes[edge.fromNode]
@@ -300,6 +355,23 @@ func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposed
 		}
 	}
 
+	// Set up forward-reference state buffers and wire state read nodes.
+	state := make([]*stateEntry, 0, len(fwdRefs))
+	for _, fr := range fwdRefs {
+		entry := &stateEntry{
+			name:       fr.name,
+			readerID:   fr.readerID,
+			writerID:   fr.writerID,
+			writerPort: fr.writerPort,
+		}
+		state = append(state, entry)
+
+		// Wire the state read node to return the buffer value.
+		nodes[fr.readerID].run = func(_ []*autograd.Variable) ([]*autograd.Variable, error) {
+			return []*autograd.Variable{entry.value}, nil
+		}
+	}
+
 	// Compute execution levels (for parallel execution) and flat order.
 	levels, err := topologicalLevels(nodes, edges)
 	if err != nil {
@@ -325,6 +397,7 @@ func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposed
 		order:     order,
 		levels:    levels,
 		edgesFrom: edgesFrom,
+		state:     state,
 	}, nil
 }
 

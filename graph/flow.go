@@ -21,6 +21,20 @@ type nodeRef struct {
 	outputPort string
 }
 
+// pendingUsing records a forward reference — Using called before the matching Tag.
+type pendingUsing struct {
+	readerID string // state_read node that was created
+	targetID string // node that consumes this state
+}
+
+// forwardRef is a resolved forward reference (Using before Tag, now matched).
+type forwardRef struct {
+	name       string
+	readerID   string // state_read node ID
+	writerID   string // node that Tag points to
+	writerPort string // output port on the writer
+}
+
 // FlowBuilder builds a graph using a fluent API that reads as data flow.
 //
 //	g, err := graph.From(encoder).
@@ -28,13 +42,17 @@ type nodeRef struct {
 //	    Through(decoder).
 //	    Build()
 type FlowBuilder struct {
-	nodes   map[string]*Node
-	edges   []*Edge
-	inputs  []exposedPort
-	outputs []exposedPort
-	current []*nodeRef // current stream position(s) — >1 after Split
-	counter int
-	err     error
+	nodes       map[string]*Node
+	edges       []*Edge
+	inputs      []exposedPort
+	outputs     []exposedPort
+	current     []*nodeRef // current stream position(s) — >1 after Split
+	taps        map[string]*nodeRef
+	onTarget    *nodeRef                  // node that Using() wires to
+	pending     map[string][]pendingUsing // forward refs awaiting Tag
+	forwardRefs []forwardRef              // resolved forward refs
+	counter     int
+	err         error
 }
 
 // From starts a new graph flow at the given module.
@@ -46,6 +64,7 @@ func From(m nn.Module) *FlowBuilder {
 
 	ref := fb.addModule(m)
 	fb.current = []*nodeRef{ref}
+	fb.onTarget = ref
 
 	// Expose the entry node's input ports as graph-level inputs.
 	node := fb.nodes[ref.id]
@@ -83,6 +102,7 @@ func (fb *FlowBuilder) Through(m nn.Module) *FlowBuilder {
 	})
 
 	fb.current = []*nodeRef{ref}
+	fb.onTarget = ref
 	return fb
 }
 
@@ -127,6 +147,7 @@ func (fb *FlowBuilder) Also(m nn.Module) *FlowBuilder {
 	})
 
 	fb.current = []*nodeRef{merge}
+	fb.onTarget = transform
 	return fb
 }
 
@@ -162,6 +183,7 @@ func (fb *FlowBuilder) Split(modules ...nn.Module) *FlowBuilder {
 	}
 
 	fb.current = refs
+	fb.onTarget = nil
 	return fb
 }
 
@@ -200,7 +222,136 @@ func (fb *FlowBuilder) Merge(m nn.Module) *FlowBuilder {
 	}
 
 	fb.current = []*nodeRef{ref}
+	fb.onTarget = ref
 	return fb
+}
+
+// Tag names the current position in the flow so it can be referenced
+// later with Using. The name must be unique within the graph.
+//
+//	graph.From(encoder).
+//	    Through(layer1).Tag("hidden").
+//	    Through(layer2).
+//	    Through(crossAttn).Using("hidden").
+//	    Build()
+func (fb *FlowBuilder) Tag(name string) *FlowBuilder {
+	if fb.err != nil {
+		return fb
+	}
+	if len(fb.current) != 1 {
+		fb.err = fmt.Errorf("graph: Tag requires single stream (got %d)", len(fb.current))
+		return fb
+	}
+	if fb.taps == nil {
+		fb.taps = make(map[string]*nodeRef)
+	}
+	if _, exists := fb.taps[name]; exists {
+		fb.err = fmt.Errorf("graph: duplicate tag name %q", name)
+		return fb
+	}
+
+	cur := fb.current[0]
+	fb.taps[name] = cur
+
+	// Resolve any pending forward references to this tag.
+	if pending, ok := fb.pending[name]; ok {
+		for _, p := range pending {
+			fb.forwardRefs = append(fb.forwardRefs, forwardRef{
+				name:       name,
+				readerID:   p.readerID,
+				writerID:   cur.id,
+				writerPort: cur.outputPort,
+			})
+		}
+		delete(fb.pending, name)
+	}
+
+	return fb
+}
+
+// Using wires additional inputs from previously tagged points to the
+// preceding node(s). After Through, Gate, Merge, or Also, it targets
+// that single node. After Split, it targets all branch modules —
+// each branch receives the tagged references as extra Forward arguments.
+//
+//	// Single target:
+//	graph.From(encoder).Tag("memory").
+//	    Through(crossAttention).Using("memory").
+//	    Build()
+//
+//	// All branches:
+//	graph.From(encoder).Tag("memory").
+//	    Split(headA, headB, headC).Using("memory").
+//	    Merge(concat).
+//	    Build()
+func (fb *FlowBuilder) Using(refs ...string) *FlowBuilder {
+	if fb.err != nil {
+		return fb
+	}
+	if len(refs) == 0 {
+		return fb
+	}
+
+	// Determine targets: single node or all split branches.
+	var targets []*nodeRef
+	switch {
+	case fb.onTarget != nil:
+		targets = []*nodeRef{fb.onTarget}
+	case len(fb.current) > 1:
+		targets = fb.current
+	default:
+		fb.err = fmt.Errorf("graph: Using requires a preceding Through, Gate, Split, or Merge")
+		return fb
+	}
+
+	for _, target := range targets {
+		if err := fb.wireUsing(target, refs); err != nil {
+			fb.err = err
+			return fb
+		}
+	}
+	return fb
+}
+
+// wireUsing adds tagged references as extra input ports to a single node.
+// If a tag hasn't been set yet (Using before Tag), it creates a forward
+// reference — state carried between Forward() calls.
+func (fb *FlowBuilder) wireUsing(target *nodeRef, refs []string) error {
+	node := fb.nodes[target.id]
+	for _, ref := range refs {
+		portName := fmt.Sprintf("ref_%s", ref)
+
+		tap, ok := fb.taps[ref]
+		if ok {
+			// Backward reference: tag already exists, wire directly.
+			node.inputPorts = append(node.inputPorts, portName)
+			fb.edges = append(fb.edges, &Edge{
+				fromNode: tap.id,
+				fromPort: tap.outputPort,
+				toNode:   target.id,
+				toPort:   portName,
+			})
+			continue
+		}
+
+		// Forward reference: tag not set yet. Create a state reader node.
+		readerRef := fb.addStateReadNode(ref)
+		node.inputPorts = append(node.inputPorts, portName)
+		fb.edges = append(fb.edges, &Edge{
+			fromNode: readerRef.id,
+			fromPort: readerRef.outputPort,
+			toNode:   target.id,
+			toPort:   portName,
+		})
+		if fb.pending == nil {
+			fb.pending = make(map[string][]pendingUsing)
+		}
+		fb.pending[ref] = append(fb.pending[ref], pendingUsing{
+			readerID: readerRef.id,
+			targetID: target.id,
+		})
+	}
+	return nil
 }
 
 // Build finalizes the graph. The current stream's output becomes the
@@ -214,6 +365,11 @@ func (fb *FlowBuilder) Build() (*Graph, error) {
 		return nil, fmt.Errorf("graph: cannot build with %d open streams; use Merge to combine", len(fb.current))
 	}
 
+	// Check for unresolved forward references.
+	for name := range fb.pending {
+		return nil, fmt.Errorf("graph: unresolved forward reference %q (Using without matching Tag)", name)
+	}
+
 	// Expose the final node's output as the graph output.
 	cur := fb.current[0]
 	fb.outputs = append(fb.outputs, exposedPort{
@@ -222,7 +378,7 @@ func (fb *FlowBuilder) Build() (*Graph, error) {
 		port:   cur.outputPort,
 	})
 
-	return buildGraph(fb.nodes, fb.edges, fb.inputs, fb.outputs)
+	return buildGraph(fb.nodes, fb.edges, fb.inputs, fb.outputs, fb.forwardRefs)
 }
 
 // --- internal helpers ---
@@ -236,6 +392,7 @@ func (fb *FlowBuilder) addModule(m nn.Module) *nodeRef {
 		outputPorts: []string{DefaultOutput},
 		run:         run,
 		params:      params,
+		module:      m,
 	}
 	return &nodeRef{id: name, outputPort: DefaultOutput}
 }
@@ -288,8 +445,24 @@ func (fb *FlowBuilder) addMergeModule(m nn.Module, n int) *nodeRef {
 		outputPorts: []string{DefaultOutput},
 		run:         run,
 		params:      params,
+		module:      m,
 	}
 	return &nodeRef{id: name, outputPort: DefaultOutput}
+}
+
+// addStateReadNode creates a root node that reads from a state buffer.
+// Its run function is set during buildGraph once the state entry exists.
+func (fb *FlowBuilder) addStateReadNode(name string) *nodeRef {
+	nodeID := fmt.Sprintf("state_read_%s_%d", name, fb.counter)
+	fb.counter++
+	fb.nodes[nodeID] = &Node{
+		id:          nodeID,
+		inputPorts:  []string{},
+		outputPorts: []string{DefaultOutput},
+		run:         nil, // set by buildGraph
+		params:      func() []*nn.Parameter { return nil },
+	}
+	return &nodeRef{id: nodeID, outputPort: DefaultOutput}
 }
 
 func (fb *FlowBuilder) autoName(v any) string {
