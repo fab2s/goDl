@@ -73,6 +73,13 @@ func errVariable(err error) *Variable {
 	return &Variable{err: err}
 }
 
+// ErrVariable creates a variable that carries an error.
+// Used by sibling packages (like graph/) to propagate errors
+// through the Module interface without breaking the chain.
+func ErrVariable(err error) *Variable {
+	return errVariable(err)
+}
+
 // Data returns the underlying tensor.
 func (v *Variable) Data() *tensor.Tensor {
 	return v.data
