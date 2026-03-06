@@ -325,6 +325,67 @@ extern "C" char* godl_reshape(TorchTensor t, int64_t* shape, int ndim,
     }
 }
 
+extern "C" char* godl_exp(TorchTensor t, TorchTensor* result) {
+    try {
+        *result = wrap(torch::exp(unwrap(t)));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_log(TorchTensor t, TorchTensor* result) {
+    try {
+        *result = wrap(torch::log(unwrap(t)));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_randn(int64_t* shape, int ndim, int dtype, int device,
+                              TorchTensor* result) {
+    try {
+        auto options = torch::TensorOptions()
+            .dtype(to_scalar_type(dtype))
+            .device(to_device(device));
+        *result = wrap(torch::randn(make_shape(shape, ndim), options));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_add_scalar(TorchTensor t, double scalar,
+                                  TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t) + scalar);
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_neg(TorchTensor t, TorchTensor* result) {
+    try {
+        *result = wrap(-unwrap(t));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_max_dim(TorchTensor t, int dim, int keepdim,
+                               TorchTensor* result) {
+    try {
+        // std::get<0> gets the values (not the indices)
+        *result = wrap(std::get<0>(unwrap(t).max(dim, keepdim != 0)));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
 // --- Device operations ---
 
 extern "C" char* godl_to_device(TorchTensor t, int device,

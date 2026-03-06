@@ -196,6 +196,66 @@ func (t *Tensor) Reshape(shape []int64) *Tensor {
 	return wrap(raw)
 }
 
+// Exp returns element-wise exponential.
+func (t *Tensor) Exp() *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.Exp(t.raw)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// Log returns element-wise natural logarithm.
+func (t *Tensor) Log() *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.Log(t.raw)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// AddScalar adds a scalar to every element.
+func (t *Tensor) AddScalar(scalar float64) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.AddScalar(t.raw, scalar)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// Neg returns element-wise negation.
+func (t *Tensor) Neg() *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.Neg(t.raw)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// MaxDim returns max values along a dimension.
+func (t *Tensor) MaxDim(dim int, keepdim bool) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.MaxDim(t.raw, dim, keepdim)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
 // --- Device operations ---
 
 // ToDevice moves the tensor to the specified device. Returns a new tensor.

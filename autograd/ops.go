@@ -284,6 +284,175 @@ func (v *Variable) MulScalar(scalar float64) *Variable {
 	return newVar(result, fn)
 }
 
+// Exp returns element-wise exponential.
+// Backward: grad_input = gradOutput * exp(input).
+func (v *Variable) Exp() *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.Exp()
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if v.requiresGrad {
+		output := result
+		fn = &gradFn{
+			name:   "ExpBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				return []*tensor.Tensor{grad.Mul(output)}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
+// Log returns element-wise natural logarithm.
+// Backward: grad_input = gradOutput / input.
+func (v *Variable) Log() *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.Log()
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if v.requiresGrad {
+		fn = &gradFn{
+			name:   "LogBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				// d/dx ln(x) = 1/x
+				// Compute 1/input as exp(-log(input)) = exp(-output)
+				invInput := result.Neg().Exp()
+				return []*tensor.Tensor{grad.Mul(invInput)}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
+// Neg returns element-wise negation.
+// Backward: grad_input = -gradOutput.
+func (v *Variable) Neg() *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.Neg()
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if v.requiresGrad {
+		fn = &gradFn{
+			name:   "NegBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				return []*tensor.Tensor{grad.Neg()}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
+// AddScalar adds a constant to every element.
+// Backward: grad_input = gradOutput (scalar doesn't affect gradient).
+func (v *Variable) AddScalar(scalar float64) *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.AddScalar(scalar)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if v.requiresGrad {
+		fn = &gradFn{
+			name:   "AddScalarBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				return []*tensor.Tensor{grad}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
+// SumDim reduces along a single dimension.
+// Backward: gradient is expanded back to the input shape.
+func (v *Variable) SumDim(dim int, keepdim bool) *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.SumDim(dim, keepdim)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if v.requiresGrad {
+		inputData := v.data
+		fn = &gradFn{
+			name:   "SumDimBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				ones := inputData.OnesLike()
+				return []*tensor.Tensor{ones.Mul(grad)}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
+// Transpose swaps two dimensions.
+// Backward: grad_input = transpose(gradOutput, dim0, dim1).
+func (v *Variable) Transpose(dim0, dim1 int) *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.Transpose(dim0, dim1)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if v.requiresGrad {
+		fn = &gradFn{
+			name:   "TransposeBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				// Transpose is its own inverse with the same dims.
+				return []*tensor.Tensor{grad.Transpose(dim0, dim1)}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
+// Reshape returns a variable with the given shape.
+// Backward: grad_input = reshape(gradOutput, original_shape).
+func (v *Variable) Reshape(shape []int64) *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.Reshape(shape)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	var fn *gradFn
+	if v.requiresGrad {
+		originalShape := v.data.Shape()
+		fn = &gradFn{
+			name:   "ReshapeBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				return []*tensor.Tensor{grad.Reshape(originalShape)}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
 // --- Broadcast gradient reduction ---
 
 // unbroadcast reduces a gradient tensor to match the original input shape.

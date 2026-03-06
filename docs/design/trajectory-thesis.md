@@ -275,6 +275,108 @@ engineering barriers that prevent researchers from exploring them.
 
 ---
 
+## Modular intelligence
+
+The current AI development paradigm is monolithic. One team trains one model
+with one loss function in one massive run. Everything is entangled — fixing
+math reasoning risks degrading language ability, retraining visual perception
+requires a full run costing millions. The organizational structure mirrors the
+architecture: everyone must understand everything because everything affects
+everything.
+
+This is not how any other complex engineering discipline works.
+
+### How complex systems are actually built
+
+Nobody builds an airplane as one monolithic piece. The engine team builds
+engines. The avionics team builds avionics. The airframe team builds structure.
+Integration engineers compose them. Each team is world-class at their piece.
+An engine upgrade doesn't require rebuilding the wings.
+
+The same principle applies to intelligence. The human brain is not a single
+homogeneous network. It is a composition of specialized modules — visual cortex,
+motor cortex, hippocampus, prefrontal cortex — each with different architecture,
+different learning rules, different connectivity patterns. They were "trained"
+on different objectives over evolutionary timescales. They compose through
+well-defined interfaces (neural pathways). Damage to one module impairs specific
+abilities without destroying others.
+
+### Modular AI development
+
+Graph-as-Module composition enables the same structure for AI:
+
+**Architecture level.** Independent modules with clear interfaces. A perception
+graph doesn't know or care about the reasoning graph. They communicate through
+typed tensor connections, not shared weights. Each module can have different
+architecture — CNNs for vision, GRUs for sequential reasoning, transformers
+for language — composed in a single executable graph.
+
+**Training level.** Each module has its own training strategy, its own data, its
+own loss function, its own optimizer. The math module is trained on mathematical
+reasoning with RL rewards. The vision module is trained on images with
+supervised labels. The orchestrator is trained on how to compose them. Retraining
+one doesn't touch the others.
+
+**Team level.** A small team owns the vision module end-to-end. They understand
+its architecture, its failure modes, its training data. They don't need to
+understand reinforcement learning — that's another team's module. The graph
+designer composes their work. This scales: ten specialized teams of five
+outperform one team of fifty trying to hold the entire system in their heads.
+
+**Deployment level.** Update one module without redeploying the whole system. The
+vision module improved? Swap it in. The reasoning module has a regression? Roll
+it back. The orchestrator stays the same. Version each module independently.
+A/B test individual components.
+
+### The meta-learning layer
+
+The most powerful implication: a graph that orchestrates pre-trained specialized
+modules is itself a Module. It can be trained. Its training objective is not
+"solve the task" — it's "learn how to compose the available capabilities to
+solve the task."
+
+This separates two fundamentally different kinds of learning:
+
+1. **Capability learning** — teaching a module to do something (perceive,
+   reason, remember). Requires large data, specialized training, deep domain
+   expertise. Done once, reused everywhere.
+
+2. **Composition learning** — teaching the orchestrator when and how to invoke
+   capabilities. Requires much less data (routing decisions, not raw
+   computation). Can be retrained quickly. Can be task-specific while the
+   capabilities remain general.
+
+This mirrors how human expertise works. A doctor doesn't re-learn visual
+perception for each patient. They compose pre-existing capabilities — vision,
+memory, reasoning, pattern matching — through a learned orchestration strategy
+specific to medical diagnosis. The capabilities are general; the composition
+is specialized.
+
+### Why the tools matter
+
+The reason AI hasn't adopted modular development isn't that it's a bad idea.
+It's that the tools didn't support it:
+
+- **You can't modularize what you can't compose.** If the framework has no
+  concept of sub-graphs, you can't build independent modules.
+- **You can't independently retrain what you can't independently differentiate.**
+  If gradients must flow through the entire system, you can't freeze one module
+  while training another.
+- **You can't parallelize what your framework serializes.** If every module
+  dispatch goes through Python's GIL, you can't run independent modules
+  concurrently.
+- **You can't iterate quickly on composition if composition is expensive.** If
+  the orchestrator's branching decisions each cost 3-5μs of Python overhead,
+  complex routing becomes impractical.
+
+goDl's graph engine is designed to make all of this structural: sub-graphs with
+independent training contexts, selective gradient flow, goroutine-parallel
+module execution, and zero-overhead routing decisions. Not because the graph
+engine solves the research problems — but because it removes the engineering
+barriers that prevent the research from happening.
+
+---
+
 ## References
 
 - He et al. (2015) — *Deep Residual Learning for Image Recognition*. Skip

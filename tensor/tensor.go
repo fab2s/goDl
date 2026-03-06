@@ -139,6 +139,16 @@ func Rand(shape []int64, opts ...Option) (*Tensor, error) {
 	return wrap(raw), nil
 }
 
+// RandN creates a tensor with values from a standard normal distribution.
+func RandN(shape []int64, opts ...Option) (*Tensor, error) {
+	o := applyOptions(opts)
+	raw, err := libtorch.RandN(shape, o.dtype.toLibtorch(), o.device.toLibtorch())
+	if err != nil {
+		return nil, err
+	}
+	return wrap(raw), nil
+}
+
 // FromFloat32 creates a tensor from a Go slice. Data is copied.
 func FromFloat32(data []float32, shape []int64, opts ...Option) (*Tensor, error) {
 	o := applyOptions(opts)

@@ -139,6 +139,12 @@ func (v *Variable) ZeroGrad() {
 	}
 }
 
+// SetData replaces the underlying tensor data without affecting gradients
+// or graph connectivity. Used by optimizers to update parameter values.
+func (v *Variable) SetData(data *tensor.Tensor) {
+	v.data = data
+}
+
 // Detach returns a new leaf variable sharing the same tensor data
 // but with no gradient tracking. Useful for stopping gradient flow.
 func (v *Variable) Detach() *Variable {

@@ -79,6 +79,13 @@ char* godl_ones_like(TorchTensor t, TorchTensor* result);
 char* godl_mul_scalar(TorchTensor t, double scalar, TorchTensor* result);
 char* godl_gt_scalar(TorchTensor t, double scalar, TorchTensor* result);
 char* godl_reshape(TorchTensor t, int64_t* shape, int ndim, TorchTensor* result);
+char* godl_exp(TorchTensor t, TorchTensor* result);
+char* godl_log(TorchTensor t, TorchTensor* result);
+char* godl_randn(int64_t* shape, int ndim, int dtype, int device,
+                  TorchTensor* result);
+char* godl_add_scalar(TorchTensor t, double scalar, TorchTensor* result);
+char* godl_neg(TorchTensor t, TorchTensor* result);
+char* godl_max_dim(TorchTensor t, int dim, int keepdim, TorchTensor* result);
 
 // --- Device operations ---
 

@@ -386,6 +386,76 @@ func Reshape(t *Tensor, shape []int64) (*Tensor, error) {
 	return &Tensor{handle: handle}, nil
 }
 
+// Exp returns element-wise exponential.
+func Exp(t *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_exp(t.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Log returns element-wise natural logarithm.
+func Log(t *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_log(t.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// RandN creates a tensor with values from a standard normal distribution.
+func RandN(shape []int64, dtype DType, device Device) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_randn(
+		(*C.int64_t)(unsafe.Pointer(&shape[0])),
+		C.int(len(shape)),
+		C.int(dtype),
+		C.int(device),
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// AddScalar adds a scalar to every element.
+func AddScalar(t *Tensor, scalar float64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_add_scalar(t.handle, C.double(scalar), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Neg returns element-wise negation.
+func Neg(t *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_neg(t.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// MaxDim returns the max values along a dimension.
+func MaxDim(t *Tensor, dim int, keepdim bool) (*Tensor, error) {
+	var handle C.TorchTensor
+	kd := C.int(0)
+	if keepdim {
+		kd = 1
+	}
+	cerr := C.godl_max_dim(t.handle, C.int(dim), kd, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
 // --- Device operations ---
 
 // ToDevice moves a tensor to the specified device. Returns a new tensor.
