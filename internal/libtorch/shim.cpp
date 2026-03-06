@@ -243,6 +243,88 @@ extern "C" char* godl_tanh_op(TorchTensor a, TorchTensor* result) {
     }
 }
 
+// --- Additional operations (used by autograd backward) ---
+
+extern "C" char* godl_sub(TorchTensor a, TorchTensor b, TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(a) - unwrap(b));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_transpose(TorchTensor t, int dim0, int dim1,
+                                 TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t).transpose(dim0, dim1).contiguous());
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_sum(TorchTensor t, TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t).sum());
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_sum_dim(TorchTensor t, int dim, int keepdim,
+                               TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t).sum(dim, keepdim != 0));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_ones_like(TorchTensor t, TorchTensor* result) {
+    try {
+        *result = wrap(torch::ones_like(unwrap(t)));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_mul_scalar(TorchTensor t, double scalar,
+                                  TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t) * scalar);
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_gt_scalar(TorchTensor t, double scalar,
+                                 TorchTensor* result) {
+    try {
+        // Returns float mask (0.0 or 1.0) matching the input dtype,
+        // suitable for element-wise multiplication in backward passes.
+        auto mask = torch::gt(unwrap(t), scalar);
+        *result = wrap(mask.to(unwrap(t).scalar_type()));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_reshape(TorchTensor t, int64_t* shape, int ndim,
+                               TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t).reshape(make_shape(shape, ndim)).contiguous());
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
 // --- Device operations ---
 
 extern "C" char* godl_to_device(TorchTensor t, int device,

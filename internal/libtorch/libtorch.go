@@ -295,6 +295,97 @@ func Tanh(a *Tensor) (*Tensor, error) {
 	return &Tensor{handle: handle}, nil
 }
 
+// --- Additional operations (used by autograd backward) ---
+
+// Sub returns a - b (element-wise).
+func Sub(a, b *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_sub(a.handle, b.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Transpose swaps two dimensions.
+func Transpose(t *Tensor, dim0, dim1 int) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_transpose(t.handle, C.int(dim0), C.int(dim1), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Sum reduces all elements to a single scalar tensor.
+func Sum(t *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_sum(t.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// SumDim reduces along a single dimension.
+func SumDim(t *Tensor, dim int, keepdim bool) (*Tensor, error) {
+	var handle C.TorchTensor
+	kd := C.int(0)
+	if keepdim {
+		kd = 1
+	}
+	cerr := C.godl_sum_dim(t.handle, C.int(dim), kd, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// OnesLike creates a tensor of ones with the same shape, dtype, and device.
+func OnesLike(t *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_ones_like(t.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// MulScalar multiplies every element by a scalar.
+func MulScalar(t *Tensor, scalar float64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_mul_scalar(t.handle, C.double(scalar), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// GTScalar returns a float mask where each element is 1.0 if > scalar, else 0.0.
+func GTScalar(t *Tensor, scalar float64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_gt_scalar(t.handle, C.double(scalar), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Reshape returns a tensor with the given shape.
+func Reshape(t *Tensor, shape []int64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_reshape(
+		t.handle,
+		(*C.int64_t)(unsafe.Pointer(&shape[0])),
+		C.int(len(shape)),
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
 // --- Device operations ---
 
 // ToDevice moves a tensor to the specified device. Returns a new tensor.

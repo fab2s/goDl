@@ -69,6 +69,17 @@ char* godl_relu(TorchTensor a, TorchTensor* result);
 char* godl_sigmoid(TorchTensor a, TorchTensor* result);
 char* godl_tanh_op(TorchTensor a, TorchTensor* result);
 
+// --- Additional operations (used by autograd backward) ---
+
+char* godl_sub(TorchTensor a, TorchTensor b, TorchTensor* result);
+char* godl_transpose(TorchTensor t, int dim0, int dim1, TorchTensor* result);
+char* godl_sum(TorchTensor t, TorchTensor* result);
+char* godl_sum_dim(TorchTensor t, int dim, int keepdim, TorchTensor* result);
+char* godl_ones_like(TorchTensor t, TorchTensor* result);
+char* godl_mul_scalar(TorchTensor t, double scalar, TorchTensor* result);
+char* godl_gt_scalar(TorchTensor t, double scalar, TorchTensor* result);
+char* godl_reshape(TorchTensor t, int64_t* shape, int ndim, TorchTensor* result);
+
 // --- Device operations ---
 
 // Move tensor to a different device. Returns a new tensor.

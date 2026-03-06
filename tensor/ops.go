@@ -59,6 +59,21 @@ func (t *Tensor) Matmul(other *Tensor) *Tensor {
 	return wrap(raw)
 }
 
+// Sub returns the element-wise difference t - other.
+func (t *Tensor) Sub(other *Tensor) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	if !other.valid() {
+		return other
+	}
+	raw, err := libtorch.Sub(t.raw, other.raw)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
 // --- Unary operations ---
 
 // ReLU applies the rectified linear unit activation: max(0, x).
@@ -91,6 +106,90 @@ func (t *Tensor) Tanh() *Tensor {
 		return t
 	}
 	raw, err := libtorch.Tanh(t.raw)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// Transpose swaps two dimensions.
+func (t *Tensor) Transpose(dim0, dim1 int) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.Transpose(t.raw, dim0, dim1)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// Sum reduces all elements to a scalar tensor.
+func (t *Tensor) Sum() *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.Sum(t.raw)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// SumDim reduces along a single dimension.
+func (t *Tensor) SumDim(dim int, keepdim bool) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.SumDim(t.raw, dim, keepdim)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// OnesLike creates a tensor of ones with the same shape, dtype, and device.
+func (t *Tensor) OnesLike() *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.OnesLike(t.raw)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// MulScalar multiplies every element by a scalar value.
+func (t *Tensor) MulScalar(scalar float64) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.MulScalar(t.raw, scalar)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// GTScalar returns a float mask: 1.0 where element > scalar, else 0.0.
+func (t *Tensor) GTScalar(scalar float64) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.GTScalar(t.raw, scalar)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// Reshape returns a tensor with the given shape.
+func (t *Tensor) Reshape(shape []int64) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.Reshape(t.raw, shape)
 	if err != nil {
 		return errTensor(err)
 	}

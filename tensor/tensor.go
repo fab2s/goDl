@@ -93,6 +93,19 @@ func (t *Tensor) valid() bool {
 	return t.err == nil && t.raw != nil
 }
 
+// Raw returns the underlying libtorch tensor handle.
+// This is exported for use by sibling packages (autograd) and should
+// not be used by end users.
+func (t *Tensor) Raw() *libtorch.Tensor {
+	return t.raw
+}
+
+// WrapRaw creates a managed Tensor from a raw libtorch tensor.
+// Exported for use by sibling packages (autograd).
+func WrapRaw(raw *libtorch.Tensor) *Tensor {
+	return wrap(raw)
+}
+
 // --- Creation functions ---
 // These return (*Tensor, error) since there is nothing to chain from.
 
