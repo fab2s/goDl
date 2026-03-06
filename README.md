@@ -122,6 +122,7 @@ If anyone feels like donating a modern GPU to the cause, the latent space would 
 ### Design
 - [Roadmap](docs/design/roadmap.md) — phased development plan with interface sketches
 - [CUDA Dispatch Analysis](docs/design/cuda-dispatch.md) — detailed overhead breakdown and performance thesis
+- [Trajectory Thesis](docs/design/trajectory-thesis.md) — the geometric intuition behind the project
 
 ### Origin
 - [Bootstrap](docs/origin/bootstrap.md) — research context and motivation
