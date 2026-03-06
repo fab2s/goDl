@@ -165,6 +165,17 @@ func (fb *FlowBuilder) Split(modules ...nn.Module) *FlowBuilder {
 	return fb
 }
 
+// Loop starts a loop construct that repeats a body module, carrying
+// state between iterations. Call .For(n) to set the iteration count.
+//
+//	graph.From(encoder).
+//	    Loop(refinementStep).For(5).
+//	    Through(decoder).
+//	    Build()
+func (fb *FlowBuilder) Loop(body nn.Module) *LoopBuilder {
+	return &LoopBuilder{fb: fb, body: body}
+}
+
 // Merge combines parallel streams using the given module.
 // The module receives all branch outputs as its variadic inputs.
 func (fb *FlowBuilder) Merge(m nn.Module) *FlowBuilder {

@@ -453,6 +453,176 @@ func TestParallelBackward(t *testing.T) {
 	}
 }
 
+func TestLoopForward(t *testing.T) {
+	// Body: scale by 2 (Linear with W=2*I, b=0)
+	// Loop 3 times: [1,2] → [2,4] → [4,8] → [8,16]
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	doubler, _ := nn.NewLinear(2, 2)
+	setLinearWeights(doubler, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	g, err := From(entry).Loop(doubler).For(3).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	vals := allF32(result)
+	// 3 doublings: [1,2] → [8,16]
+	if !approxEqual(vals[0], 8.0, 1e-5) || !approxEqual(vals[1], 16.0, 1e-5) {
+		t.Errorf("Loop forward: got %v, want [8, 16]", vals)
+	}
+	t.Logf("Loop forward (3 iterations): %v", vals)
+}
+
+func TestLoopBackward(t *testing.T) {
+	// Body: adds a learnable bias each iteration.
+	// state_{i+1} = state_i + bias
+	// After N iterations: result = input + N * bias
+	// Gradient of result w.r.t. bias = N (each iteration contributes 1)
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	// Body: identity transform + bias. W=I, b=[0.1, 0.2]
+	body, _ := nn.NewLinear(2, 2)
+	setLinearWeights(body, []float32{1, 0, 0, 1}, []float32{0.1, 0.2})
+
+	iterations := 5
+	g, err := From(entry).Loop(body).For(iterations).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Forward: [1, 2] + 5*[0.1, 0.2] = [1.5, 3.0]
+	vals := allF32(result)
+	if !approxEqual(vals[0], 1.5, 1e-5) || !approxEqual(vals[1], 3.0, 1e-5) {
+		t.Errorf("Loop forward: got %v, want [1.5, 3.0]", vals)
+	}
+
+	// Backward: sum to scalar then backward.
+	loss := result.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Gradient of sum(result) w.r.t. bias:
+	// Each iteration adds bias once. Sum over 2 elements.
+	// d(sum(input + N*bias))/d(bias) = [N, N] = [5, 5]
+	biasGrad := gradF32(body.Bias.Variable)
+	for i, g := range biasGrad {
+		expected := float32(iterations)
+		if !approxEqual(g, expected, 1e-4) {
+			t.Errorf("bias grad[%d]: got %v, want %v", i, g, expected)
+		}
+	}
+	t.Logf("Loop backward (BPTT, %d iterations): bias grad = %v", iterations, biasGrad)
+}
+
+func TestLoopSingleIteration(t *testing.T) {
+	// Loop with N=1 should be equivalent to a single Forward.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	body, _ := nn.NewLinear(2, 2)
+	setLinearWeights(body, []float32{3, 0, 0, 3}, []float32{1, 1})
+
+	// Via loop.
+	g, err := From(entry).Loop(body).For(1).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{2, 5}, []int64{1, 2})
+	loopResult := g.Forward(autograd.NewVariable(x, false))
+	loopVals := allF32(loopResult)
+
+	// Direct: body(entry([2,5])) = body([2,5]) = [3*2+1, 3*5+1] = [7, 16]
+	x2, _ := tensor.FromFloat32([]float32{2, 5}, []int64{1, 2})
+	directResult := body.Forward(entry.Forward(autograd.NewVariable(x2, false)))
+	directVals := allF32(directResult)
+
+	for i := range loopVals {
+		if !approxEqual(loopVals[i], directVals[i], 1e-5) {
+			t.Errorf("index %d: loop=%v, direct=%v", i, loopVals[i], directVals[i])
+		}
+	}
+	t.Logf("Loop(1) == direct: %v", loopVals)
+}
+
+func TestLoopChained(t *testing.T) {
+	// Full chain: entry → Loop(body, 3) → output layer
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	body, _ := nn.NewLinear(2, 2)
+	setLinearWeights(body, []float32{1, 0, 0, 1}, []float32{1, 1}) // +1 each iteration
+
+	output, _ := nn.NewLinear(2, 1)
+	setLinearWeights(output, []float32{1, 1}, []float32{0}) // sum
+
+	g, err := From(entry).Loop(body).For(4).Through(output).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{0, 0}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// entry([0,0]) = [0,0]
+	// 4 iterations of +[1,1]: [4, 4]
+	// output: sum = 8
+	val := f32(result)
+	if !approxEqual(val, 8.0, 1e-5) {
+		t.Errorf("Loop chained: got %v, want 8", val)
+	}
+
+	// Backward through loop + output layer.
+	if err := result.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	// output.Weight grad should exist.
+	if output.Weight.Grad() == nil {
+		t.Error("output.Weight: no gradient")
+	}
+	// body.Bias grad: d(sum([4,4]))/d(bias) = [4, 4] (each iteration contributes 1, sum has 2 paths)
+	biasGrad := gradF32(body.Bias.Variable)
+	t.Logf("Loop chained: output=%.1f, body.Bias grad=%v", val, biasGrad)
+}
+
+func TestLoopParameters(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 2)
+	body, _ := nn.NewLinear(2, 2)
+
+	g, err := From(entry).Loop(body).For(3).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// entry: 2 params (W+b), body: 2 params (W+b), total: 4
+	// Body params appear once despite being used 3 times (same Module).
+	params := g.Parameters()
+	if len(params) != 4 {
+		t.Errorf("expected 4 parameters, got %d", len(params))
+	}
+	t.Logf("Loop parameters: %d (body counted once despite %d iterations)", len(params), 3)
+}
+
 func TestParallelWithRace(t *testing.T) {
 	// Build a graph with parallel branches that each do real computation.
 	// Run with -race to verify no data races.
