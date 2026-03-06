@@ -46,14 +46,16 @@ func (fb *FlowBuilder) Switch(router nn.Module, branches ...nn.Module) *FlowBuil
 	name := fmt.Sprintf("switch_%d", fb.counter)
 	fb.counter++
 
-	fb.nodes[name] = &Node{
+	node := &Node{
 		id:          name,
 		inputPorts:  []string{DefaultInput},
 		outputPorts: []string{DefaultOutput},
-		run:         makeSwitchFunc(router, branches),
 		params:      composite.Parameters,
 		module:      composite,
+		refTarget:   router, // Using refs go to the router, not the composite
 	}
+	node.run = makeSwitchFunc(router, branches, node)
+	fb.nodes[name] = node
 
 	fb.edges = append(fb.edges, &Edge{
 		fromNode: cur.id,
@@ -70,10 +72,20 @@ func (fb *FlowBuilder) Switch(router nn.Module, branches ...nn.Module) *FlowBuil
 
 // makeSwitchFunc creates a nodeFunc that runs the router to select a
 // branch index, then executes only that branch.
-func makeSwitchFunc(router nn.Module, branches []nn.Module) nodeFunc {
+// If the router implements nn.NamedInputModule and Using refs are wired,
+// ForwardNamed is called so the router receives refs by tag name.
+func makeSwitchFunc(router nn.Module, branches []nn.Module, node *Node) nodeFunc {
 	return func(inputs []*autograd.Variable) ([]*autograd.Variable, error) {
-		// Run router with all inputs (stream + Using refs).
-		logits := router.Forward(inputs...)
+		// Run router — use ForwardNamed if available and refs exist.
+		var logits *autograd.Variable
+		if named, ok := router.(nn.NamedInputModule); ok {
+			if refs := extractRefs(node.inputPorts, inputs); refs != nil {
+				logits = named.ForwardNamed(inputs[0], refs)
+			}
+		}
+		if logits == nil {
+			logits = router.Forward(inputs...)
+		}
 		if err := logits.Err(); err != nil {
 			return nil, fmt.Errorf("switch router: %w", err)
 		}

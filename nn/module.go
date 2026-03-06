@@ -25,6 +25,46 @@ type Module interface {
 	Parameters() []*Parameter
 }
 
+// NamedInputModule is an optional interface for modules that receive
+// Using references in a graph. When a module implements this interface,
+// the graph runtime calls ForwardNamed instead of Forward, passing
+// Using refs as a named map instead of positional arguments.
+//
+// On the first forward pass with forward refs (Using before Tag),
+// refs that are not yet available are omitted from the map. Use the
+// standard Go map lookup to check:
+//
+//	if state, ok := refs["memory"]; ok {
+//	    // state is available
+//	}
+//
+// The module must also implement Module (for Parameters and as a
+// fallback when the module is used without Using refs).
+//
+//	type myRouter struct{}
+//
+//	func (r *myRouter) ForwardNamed(stream *autograd.Variable, refs map[string]*autograd.Variable) *autograd.Variable {
+//	    ctx := refs["context"]
+//	    // use stream and ctx to make a decision
+//	}
+type NamedInputModule interface {
+	ForwardNamed(stream *autograd.Variable, refs map[string]*autograd.Variable) *autograd.Variable
+}
+
+// RefValidator is an optional interface that modules can implement to
+// declare which Using refs they expect. The graph validates at Build
+// time that exactly these refs are wired — catching typos, missing
+// Using calls, and unexpected refs before any forward pass runs.
+//
+// RefValidator works independently of NamedInputModule: any module
+// that receives Using refs (whether via Forward or ForwardNamed) can
+// implement RefValidator to get build-time validation.
+//
+//	func (r *myRouter) RefNames() []string { return []string{"context"} }
+type RefValidator interface {
+	RefNames() []string
+}
+
 // TrainToggler is implemented by modules that behave differently during
 // training vs inference (e.g., Dropout, BatchNorm). Modules that don't
 // care about training mode simply don't implement this interface.

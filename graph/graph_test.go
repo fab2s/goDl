@@ -3,6 +3,7 @@ package graph
 import (
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/fab2s/goDl/autograd"
@@ -81,6 +82,26 @@ func (a *nilSafeAdd) Forward(inputs ...*autograd.Variable) *autograd.Variable {
 }
 
 func (a *nilSafeAdd) Parameters() []*nn.Parameter { return nil }
+
+// namedRouter is a test module implementing NamedInputModule + RefValidator.
+// It returns a fixed branch index but declares expected ref names.
+type namedRouter struct {
+	index    float32
+	expected []string // RefValidator: declared expected refs
+}
+
+func (r *namedRouter) Forward(_ ...*autograd.Variable) *autograd.Variable {
+	t, _ := tensor.FromFloat32([]float32{r.index}, []int64{1})
+	return autograd.NewVariable(t, false)
+}
+
+func (r *namedRouter) ForwardNamed(_ *autograd.Variable, _ map[string]*autograd.Variable) *autograd.Variable {
+	t, _ := tensor.FromFloat32([]float32{r.index}, []int64{1})
+	return autograd.NewVariable(t, false)
+}
+
+func (r *namedRouter) RefNames() []string           { return r.expected }
+func (r *namedRouter) Parameters() []*nn.Parameter   { return nil }
 
 // --- Tests ---
 
@@ -1393,19 +1414,19 @@ func TestSetTrainingHelperFunction(t *testing.T) {
 // --- While loop tests ---
 
 func TestWhileForward(t *testing.T) {
-	// Body doubles each iteration. Predicate allows 3 iterations.
-	// Same result as For(3): [1,2] → [2,4] → [4,8] → [8,16]
+	// Body doubles each iteration. ThresholdHalt(10) halts when max > 10.
+	// [1,2] → check: max=2 ≤ 10 → body → [2,4]
+	//       → check: max=4 ≤ 10 → body → [4,8]
+	//       → check: max=8 ≤ 10 → body → [8,16]
+	//       → check: max=16 > 10 → halt
+	// 3 iterations, same result as For(3).
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
 
 	doubler, _ := nn.NewLinear(2, 2)
 	setLinearWeights(doubler, []float32{2, 0, 0, 2}, []float32{0, 0})
 
-	pred := func(_ *autograd.Variable, iter int) bool {
-		return iter < 3
-	}
-
-	g, err := From(entry).Loop(doubler).While(pred, 10).Build()
+	g, err := From(entry).Loop(doubler).While(ThresholdHalt(10), 10).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1420,19 +1441,17 @@ func TestWhileForward(t *testing.T) {
 	if !approxEqual(vals[0], 8.0, 1e-5) || !approxEqual(vals[1], 16.0, 1e-5) {
 		t.Errorf("While forward: got %v, want [8, 16]", vals)
 	}
-	t.Logf("While forward (3 iterations via predicate): %v", vals)
+	t.Logf("While forward (3 iterations, halt at >10): %v", vals)
 }
 
 func TestWhileStatePredicate(t *testing.T) {
-	// Body doubles. Predicate: continue while max element < 50.
-	// [1,2] → [2,4] → [4,8] → [8,16] → [16,32] → [32,64] pred fails (64>=50)
-	// Pred checks BEFORE body: at iter 5, state is [32,64], pred returns false.
-	// Actually: pred at iter 0 sees input [1,2], runs body → [2,4]
-	// pred at iter 1 sees [2,4], runs → [4,8]
-	// pred at iter 2 sees [4,8], runs → [8,16]
-	// pred at iter 3 sees [8,16], runs → [16,32]
-	// pred at iter 4 sees [16,32], runs → [32,64]
-	// pred at iter 5 sees [32,64], max=64 >= 50 → stop
+	// Body doubles. ThresholdHalt(50): halt when max > 50.
+	// check [1,2] max=2 → body → [2,4]
+	// check [2,4] max=4 → body → [4,8]
+	// check [4,8] max=8 → body → [8,16]
+	// check [8,16] max=16 → body → [16,32]
+	// check [16,32] max=32 → body → [32,64]
+	// check [32,64] max=64 > 50 → halt
 	// Result: [32, 64] (5 iterations)
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -1440,17 +1459,7 @@ func TestWhileStatePredicate(t *testing.T) {
 	doubler, _ := nn.NewLinear(2, 2)
 	setLinearWeights(doubler, []float32{2, 0, 0, 2}, []float32{0, 0})
 
-	pred := func(state *autograd.Variable, _ int) bool {
-		data, _ := state.Data().Float32Data()
-		for _, v := range data {
-			if v >= 50 {
-				return false
-			}
-		}
-		return true
-	}
-
-	g, err := From(entry).Loop(doubler).While(pred, 100).Build()
+	g, err := From(entry).Loop(doubler).While(ThresholdHalt(50), 100).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1466,16 +1475,15 @@ func TestWhileStatePredicate(t *testing.T) {
 }
 
 func TestWhileZeroIterations(t *testing.T) {
-	// Predicate returns false immediately — body never runs.
+	// ThresholdHalt(0): input [3,7] has max=7 > 0, halts immediately.
+	// Body never runs — input passes through.
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
 
 	doubler, _ := nn.NewLinear(2, 2)
 	setLinearWeights(doubler, []float32{2, 0, 0, 2}, []float32{0, 0})
 
-	pred := func(_ *autograd.Variable, _ int) bool { return false }
-
-	g, err := From(entry).Loop(doubler).While(pred, 10).Build()
+	g, err := From(entry).Loop(doubler).While(ThresholdHalt(0), 10).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1492,7 +1500,9 @@ func TestWhileZeroIterations(t *testing.T) {
 }
 
 func TestWhileBackward(t *testing.T) {
-	// Body: identity + bias. Predicate allows 4 iterations.
+	// Body: identity + bias [0.1, 0.2]. ThresholdHalt(2.7) gives 4 iterations.
+	// [1,2] → [1.1,2.2] → [1.2,2.4] → [1.3,2.6] → [1.4,2.8]
+	// check [1.4,2.8] max=2.8 > 2.7 → halt
 	// Gradient of sum(result) w.r.t. bias = [4, 4].
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -1500,10 +1510,7 @@ func TestWhileBackward(t *testing.T) {
 	body, _ := nn.NewLinear(2, 2)
 	setLinearWeights(body, []float32{1, 0, 0, 1}, []float32{0.1, 0.2})
 
-	iterations := 4
-	pred := func(_ *autograd.Variable, iter int) bool { return iter < iterations }
-
-	g, err := From(entry).Loop(body).While(pred, 10).Build()
+	g, err := From(entry).Loop(body).While(ThresholdHalt(2.7), 10).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1517,11 +1524,11 @@ func TestWhileBackward(t *testing.T) {
 
 	biasGrad := gradF32(body.Bias.Variable)
 	for i, g := range biasGrad {
-		if !approxEqual(g, float32(iterations), 1e-4) {
-			t.Errorf("bias grad[%d]: got %v, want %v", i, g, iterations)
+		if !approxEqual(g, 4.0, 1e-4) {
+			t.Errorf("bias grad[%d]: got %v, want 4", i, g)
 		}
 	}
-	t.Logf("While backward (%d iters): bias grad = %v", iterations, biasGrad)
+	t.Logf("While backward (4 iters): bias grad = %v", biasGrad)
 }
 
 // --- Until loop tests ---
@@ -2068,4 +2075,96 @@ func TestSwitchTooFewBranches(t *testing.T) {
 		t.Fatal("expected error for single branch")
 	}
 	t.Logf("Error: %v", err)
+}
+
+// --- NamedInputModule validation tests ---
+
+func TestNamedInputWithoutUsing(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 4)
+	router := &namedRouter{index: 0, expected: []string{"context"}}
+	branchA, _ := nn.NewLinear(4, 4)
+	branchB, _ := nn.NewLinear(4, 4)
+
+	_, err := From(entry).
+		Switch(router, branchA, branchB).
+		Build()
+	if err == nil {
+		t.Fatal("expected build error: RefValidator without Using")
+	}
+	t.Logf("Error: %v", err)
+	if !containsAll(err.Error(), "RefNames", "context", "Using") {
+		t.Error("error message should mention RefNames, expected ref, and Using")
+	}
+}
+
+func TestNamedInputMissingRef(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 4)
+	// Module expects "context" but Using wires "features".
+	router := &namedRouter{index: 0, expected: []string{"context"}}
+	branchA, _ := nn.NewLinear(4, 4)
+	branchB, _ := nn.NewLinear(4, 4)
+
+	_, err := From(entry).Tag("features").
+		Switch(router, branchA, branchB).Using("features").
+		Build()
+	if err == nil {
+		t.Fatal("expected build error: wired ref doesn't match RefNames")
+	}
+	t.Logf("Error: %v", err)
+	// Should mention what's wrong and hint at the fix.
+	if !containsAll(err.Error(), "context", "RefNames") {
+		t.Error("error should mention missing ref name and RefNames")
+	}
+}
+
+func TestNamedInputExtraRef(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 4)
+	step, _ := nn.NewLinear(4, 4)
+	// Module expects only "context" but we wire both "context" and "extra".
+	router := &namedRouter{index: 0, expected: []string{"context"}}
+	branchA, _ := nn.NewLinear(4, 4)
+	branchB, _ := nn.NewLinear(4, 4)
+
+	_, err := From(entry).Tag("context").
+		Through(step).Tag("extra").
+		Switch(router, branchA, branchB).Using("context", "extra").
+		Build()
+	if err == nil {
+		t.Fatal("expected build error: extra Using ref not in RefNames")
+	}
+	t.Logf("Error: %v", err)
+	if !containsAll(err.Error(), "extra", "RefNames") {
+		t.Error("error should mention unexpected ref and RefNames")
+	}
+}
+
+func TestNamedInputCorrect(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 4)
+	router := &namedRouter{index: 0, expected: []string{"context"}}
+	branchA, _ := nn.NewLinear(4, 4)
+	branchB, _ := nn.NewLinear(4, 4)
+
+	g, err := From(entry).Tag("context").
+		Switch(router, branchA, branchB).Using("context").
+		Build()
+	if err != nil {
+		t.Fatal("build:", err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal("forward:", err)
+	}
+	t.Logf("Output: %v", allF32(result))
+}
+
+// containsAll checks that s contains every one of the substrings.
+func containsAll(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if !strings.Contains(s, sub) {
+			return false
+		}
+	}
+	return true
 }

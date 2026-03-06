@@ -1,6 +1,8 @@
 package nn
 
 import (
+	"fmt"
+
 	"github.com/fab2s/goDl/autograd"
 	"github.com/fab2s/goDl/tensor"
 )
@@ -57,6 +59,16 @@ func (l *Linear) Forward(inputs ...*autograd.Variable) *autograd.Variable {
 		out = out.Add(l.Bias.Variable)
 	}
 	return out
+}
+
+// MustLinear creates a Linear layer, panicking on error.
+// Use in graph construction where dimensions are known constants.
+func MustLinear(inFeatures, outFeatures int64, opts ...tensor.Option) *Linear {
+	l, err := NewLinear(inFeatures, outFeatures, opts...)
+	if err != nil {
+		panic(fmt.Sprintf("nn.MustLinear(%d, %d): %v", inFeatures, outFeatures, err))
+	}
+	return l
 }
 
 // Parameters returns weight and bias.

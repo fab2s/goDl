@@ -355,6 +355,11 @@ func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposed
 		}
 	}
 
+	// Validate RefValidator contracts (build-time, zero runtime cost).
+	if err := validateRefContracts(nodes); err != nil {
+		return nil, err
+	}
+
 	// Set up forward-reference state buffers and wire state read nodes.
 	state := make([]*stateEntry, 0, len(fwdRefs))
 	for _, fr := range fwdRefs {

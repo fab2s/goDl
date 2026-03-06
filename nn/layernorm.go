@@ -1,6 +1,8 @@
 package nn
 
 import (
+	"fmt"
+
 	"github.com/fab2s/goDl/autograd"
 	"github.com/fab2s/goDl/tensor"
 )
@@ -38,6 +40,16 @@ func NewLayerNorm(size int64, opts ...tensor.Option) (*LayerNorm, error) {
 		size:   size,
 		eps:    1e-5,
 	}, nil
+}
+
+// MustLayerNorm creates a LayerNorm module, panicking on error.
+// Use in graph construction where dimensions are known constants.
+func MustLayerNorm(size int64, opts ...tensor.Option) *LayerNorm {
+	ln, err := NewLayerNorm(size, opts...)
+	if err != nil {
+		panic(fmt.Sprintf("nn.MustLayerNorm(%d): %v", size, err))
+	}
+	return ln
 }
 
 // Forward normalizes the input over the last dimension.

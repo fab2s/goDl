@@ -14,9 +14,14 @@ import (
 // After all iterations, the final state continues downstream.
 //
 // Three termination modes:
-//   - For(n): fixed iteration count
-//   - While(pred, maxIter): predicate checked before each iteration
-//   - Until(cond, maxIter): condition module checked after each iteration
+//   - For(n): fixed iteration count, always runs exactly n times
+//   - While(cond, maxIter): condition checked before body (0..maxIter iterations)
+//   - Until(cond, maxIter): condition checked after body (1..maxIter iterations)
+//
+// While and Until use the same halt convention: the condition module
+// receives the current state and returns a scalar. Positive (> 0) means
+// halt. They differ only in timing — While can skip the body entirely,
+// Until always runs it at least once.
 //
 // Backward passes unroll automatically via autograd — each iteration
 // builds its own computation graph, and the backward walk reverses
@@ -50,18 +55,19 @@ func (lb *LoopBuilder) For(n int) *FlowBuilder {
 	return lb.wire(makeForLoopFunc(lb.body, n), lb.body)
 }
 
-// While repeats the body while pred returns true, up to maxIter iterations.
-// The predicate is checked before each iteration with the current state
-// and 0-based iteration number. If pred returns false before the first
-// iteration, the body does not execute and the input passes through.
+// While repeats the body while the condition module says "continue",
+// up to maxIter iterations. The condition is checked before each
+// iteration — if it signals halt immediately, the body never runs
+// and the input passes through unchanged.
+//
+// The condition module receives the current state and returns a scalar.
+// Positive (> 0) means halt — same convention as Until.
 //
 //	graph.From(encoder).
-//	    Loop(refine).While(func(state *autograd.Variable, iter int) bool {
-//	        return iter < maxSteps && !converged(state)
-//	    }, 100).
+//	    Loop(refine).While(graph.ThresholdHalt(100), 20).
 //	    Through(decoder).
 //	    Build()
-func (lb *LoopBuilder) While(pred func(state *autograd.Variable, iter int) bool, maxIter int) *FlowBuilder {
+func (lb *LoopBuilder) While(cond nn.Module, maxIter int) *FlowBuilder {
 	fb := lb.fb
 	if fb.err != nil {
 		return fb
@@ -75,7 +81,8 @@ func (lb *LoopBuilder) While(pred func(state *autograd.Variable, iter int) bool,
 		return fb
 	}
 
-	return lb.wire(makeWhileLoopFunc(lb.body, pred, maxIter), lb.body)
+	composite := &loopComposite{body: lb.body, cond: cond}
+	return lb.wire(makeWhileLoopFunc(lb.body, cond, maxIter), composite)
 }
 
 // Until repeats the body until the condition module signals halt, up to
@@ -158,13 +165,21 @@ func makeForLoopFunc(body nn.Module, count int) nodeFunc {
 	}
 }
 
-// makeWhileLoopFunc creates a nodeFunc that executes body while pred
-// returns true. The predicate is checked before each iteration.
-func makeWhileLoopFunc(body nn.Module, pred func(*autograd.Variable, int) bool, maxIter int) nodeFunc {
+// makeWhileLoopFunc creates a nodeFunc that checks a condition module
+// before each body execution. Positive output = halt.
+func makeWhileLoopFunc(body, cond nn.Module, maxIter int) nodeFunc {
 	return func(inputs []*autograd.Variable) ([]*autograd.Variable, error) {
 		state := inputs[0]
 		for i := range maxIter {
-			if !pred(state, i) {
+			halt := cond.Forward(state)
+			if err := halt.Err(); err != nil {
+				return nil, fmt.Errorf("loop condition at iteration %d: %w", i, err)
+			}
+			data, err := halt.Data().Float32Data()
+			if err != nil {
+				return nil, fmt.Errorf("loop condition data at iteration %d: %w", i, err)
+			}
+			if len(data) > 0 && data[0] > 0 {
 				break
 			}
 			state = body.Forward(state)
@@ -205,9 +220,10 @@ func makeUntilLoopFunc(body, cond nn.Module, maxIter int) nodeFunc {
 	}
 }
 
-// --- composite module for Until ---
+// --- composite module for While and Until ---
 
-// loopComposite bundles body + condition for SetTraining propagation.
+// loopComposite bundles body + condition for SetTraining propagation
+// and parameter collection. Used by both While and Until.
 type loopComposite struct {
 	body nn.Module
 	cond nn.Module

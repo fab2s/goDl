@@ -385,15 +385,15 @@ func (fb *FlowBuilder) Build() (*Graph, error) {
 
 func (fb *FlowBuilder) addModule(m nn.Module) *nodeRef {
 	name := fb.autoName(m)
-	run, params := wrapModule(m)
-	fb.nodes[name] = &Node{
+	node := &Node{
 		id:          name,
 		inputPorts:  []string{DefaultInput},
 		outputPorts: []string{DefaultOutput},
-		run:         run,
-		params:      params,
+		params:      m.Parameters,
 		module:      m,
 	}
+	node.run = wrapModule(m, node)
+	fb.nodes[name] = node
 	return &nodeRef{id: name, outputPort: DefaultOutput}
 }
 
@@ -438,15 +438,15 @@ func (fb *FlowBuilder) addMergeModule(m nn.Module, n int) *nodeRef {
 		inputPorts[i] = fmt.Sprintf("input_%d", i)
 	}
 
-	run, params := wrapModule(m)
-	fb.nodes[name] = &Node{
+	node := &Node{
 		id:          name,
 		inputPorts:  inputPorts,
 		outputPorts: []string{DefaultOutput},
-		run:         run,
-		params:      params,
+		params:      m.Parameters,
 		module:      m,
 	}
+	node.run = wrapModule(m, node)
+	fb.nodes[name] = node
 	return &nodeRef{id: name, outputPort: DefaultOutput}
 }
 
