@@ -468,6 +468,41 @@ func Conv2dBackward(gradOutput, input, weight *Tensor, stride, padding, dilation
 	return gradInput, gradWeight, gradBias
 }
 
+// --- Grid sampling ---
+
+// GridSample performs 2D grid sampling with bilinear interpolation.
+// Input shape: [N, C, H, W]. Grid shape: [N, H_out, W_out, 2].
+// Grid coordinates are in [-1, 1] when alignCorners is true.
+// mode: 0=bilinear, 1=nearest, 2=bicubic.
+// paddingMode: 0=zeros, 1=border, 2=reflection.
+func (t *Tensor) GridSample(grid *Tensor, mode, paddingMode int, alignCorners bool) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	if !grid.valid() {
+		return grid
+	}
+	raw, err := libtorch.GridSample(t.raw, grid.raw, mode, paddingMode, alignCorners)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// GridSampleBackward computes gradients for grid sampling.
+// Returns (gradInput, gradGrid).
+func GridSampleBackward(gradOutput, input, grid *Tensor, mode, paddingMode int, alignCorners bool) (gradInput, gradGrid *Tensor) {
+	giRaw, ggRaw, err := libtorch.GridSampleBackward(
+		gradOutput.raw, input.raw, grid.raw,
+		mode, paddingMode, alignCorners,
+	)
+	if err != nil {
+		e := errTensor(err)
+		return e, e
+	}
+	return wrap(giRaw), wrap(ggRaw)
+}
+
 // --- Stacking ---
 
 // Stack concatenates tensors along a new dimension.

@@ -679,6 +679,48 @@ func Conv2dBackward(gradOutput, input, weight *Tensor, stride, padding, dilation
 	return gradInput, gradWeight, gradBias, nil
 }
 
+// --- Grid sampling ---
+
+// GridSample performs 2D grid sampling (differentiable bilinear interpolation).
+// input: (N, C, H, W), grid: (N, H_out, W_out, 2).
+// mode: 0=bilinear, 1=nearest, 2=bicubic.
+// paddingMode: 0=zeros, 1=border, 2=reflection.
+func GridSample(input, grid *Tensor, mode, paddingMode int, alignCorners bool) (*Tensor, error) {
+	ac := C.int(0)
+	if alignCorners {
+		ac = 1
+	}
+	var handle C.TorchTensor
+	cerr := C.godl_grid_sample(
+		input.handle, grid.handle,
+		C.int(mode), C.int(paddingMode), ac,
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// GridSampleBackward computes gradients for grid sampling.
+// Returns (gradInput, gradGrid).
+func GridSampleBackward(gradOutput, input, grid *Tensor, mode, paddingMode int, alignCorners bool) (gradInput, gradGrid *Tensor, err error) {
+	ac := C.int(0)
+	if alignCorners {
+		ac = 1
+	}
+	var giHandle, ggHandle C.TorchTensor
+	cerr := C.godl_grid_sample_backward(
+		gradOutput.handle, input.handle, grid.handle,
+		C.int(mode), C.int(paddingMode), ac,
+		&giHandle, &ggHandle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, nil, err
+	}
+	return &Tensor{handle: giHandle}, &Tensor{handle: ggHandle}, nil
+}
+
 // --- Dtype casting ---
 
 // ToDType casts a tensor to a different element type. Returns a new tensor.

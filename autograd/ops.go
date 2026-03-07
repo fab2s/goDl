@@ -781,6 +781,45 @@ func (v *Variable) Conv2d(weight, bias *Variable, stride, padding, dilation []in
 	return newVar(result, fn)
 }
 
+// --- Grid sampling ---
+
+// GridSample performs differentiable 2D grid sampling.
+// Input shape: [N, C, H, W]. Grid shape: [N, H_out, W_out, 2].
+// mode: 0=bilinear, 1=nearest, 2=bicubic.
+// paddingMode: 0=zeros, 1=border, 2=reflection.
+func (v *Variable) GridSample(grid *Variable, mode, paddingMode int, alignCorners bool) *Variable {
+	if !v.valid() {
+		return v
+	}
+	if !grid.valid() {
+		return grid
+	}
+
+	result := v.data.GridSample(grid.data, mode, paddingMode, alignCorners)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+
+	inputs := []*Variable{v, grid}
+	var fn *gradFn
+	if needsGrad(inputs...) {
+		savedInput := v.data
+		savedGrid := grid.data
+		fn = &gradFn{
+			name:   "GridSampleBackward",
+			inputs: inputs,
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				gi, gg := tensor.GridSampleBackward(
+					grad, savedInput, savedGrid,
+					mode, paddingMode, alignCorners,
+				)
+				return []*tensor.Tensor{gi, gg}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
 func shapesEqual(a, b []int64) bool {
 	if len(a) != len(b) {
 		return false

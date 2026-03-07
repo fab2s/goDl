@@ -362,6 +362,25 @@ func TestGradCheckBroadcastMul(t *testing.T) {
 	}, []*tensor.Tensor{x, b}, 1e-2)
 }
 
+func TestGradCheckGridSample(t *testing.T) {
+	// Input [1, 1, 4, 4], grid [1, 2, 2, 2] — sample a 2x2 output.
+	// Use grid values well inside [-1, 1] to stay in bilinear region.
+	input, _ := tensor.FromFloat32([]float32{
+		1, 2, 3, 4,
+		5, 6, 7, 8,
+		9, 10, 11, 12,
+		13, 14, 15, 16,
+	}, []int64{1, 1, 4, 4})
+	grid, _ := tensor.FromFloat32([]float32{
+		-0.5, -0.5, 0.5, -0.5,
+		-0.5, 0.5, 0.5, 0.5,
+	}, []int64{1, 2, 2, 2})
+
+	gradCheck(t, "GridSample", func(v []*autograd.Variable) *autograd.Variable {
+		return v[0].GridSample(v[1], 0, 0, true).Sum()
+	}, []*tensor.Tensor{input, grid}, 1e-2)
+}
+
 // Composition tests: verify gradients through chained operations.
 
 func TestGradCheckComposedExpLog(t *testing.T) {
@@ -415,7 +434,7 @@ func TestGradCheckSummary(t *testing.T) {
 		"Div", "SumDim", "MeanDim", "Transpose", "Reshape",
 		"Softmax", "Select", "Narrow", "Cat", "IndexSelect",
 		"Sigmoid", "Tanh", "ReLU", "Add", "Sub", "Mul", "Matmul",
-		"Conv2d", "Conv2dBias", "BroadcastAdd", "BroadcastMul",
+		"Conv2d", "Conv2dBias", "GridSample", "BroadcastAdd", "BroadcastMul",
 		"Composed: Exp(Log)", "Composed: Sigmoid(Linear)",
 		"Composed: Softmax+CE", "Composed: Reshape+Transpose",
 		"Composed: Narrow+Cat",

@@ -109,9 +109,9 @@ digraph G {
     label="level 14";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "Linear_17" [label="Linear\n[72 params]" shape=box fillcolor="#eaecee"];
     "Linear_16" [label="Linear\n[72 params]" shape=box fillcolor="#eaecee"];
     "softmaxRouter_15" [label="softmaxRouter\n[18 params]" shape=box fillcolor="#eaecee"];
+    "Linear_17" [label="Linear\n[72 params]" shape=box fillcolor="#eaecee"];
   }
 
   subgraph cluster_level_15 {

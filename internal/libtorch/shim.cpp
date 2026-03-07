@@ -590,6 +590,39 @@ extern "C" char* godl_conv2d_backward(TorchTensor grad_output, TorchTensor input
     }
 }
 
+// --- Grid sampling ---
+
+extern "C" char* godl_grid_sample(TorchTensor input, TorchTensor grid,
+                                   int mode, int padding_mode,
+                                   int align_corners, TorchTensor* result) {
+    try {
+        *result = wrap(at::grid_sampler(
+            unwrap(input), unwrap(grid), mode, padding_mode, align_corners != 0));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_grid_sample_backward(TorchTensor grad_output,
+                                            TorchTensor input, TorchTensor grid,
+                                            int mode, int padding_mode,
+                                            int align_corners,
+                                            TorchTensor* grad_input,
+                                            TorchTensor* grad_grid) {
+    try {
+        auto result = at::grid_sampler_2d_backward(
+            unwrap(grad_output), unwrap(input), unwrap(grid),
+            mode, padding_mode, align_corners != 0,
+            {true, true});
+        *grad_input = wrap(std::get<0>(result));
+        *grad_grid = wrap(std::get<1>(result));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
 // --- Dtype casting ---
 
 extern "C" char* godl_to_dtype(TorchTensor t, int dtype, TorchTensor* result) {

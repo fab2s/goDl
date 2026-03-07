@@ -133,6 +133,23 @@ char* godl_conv2d_backward(TorchTensor grad_output, TorchTensor input,
                            TorchTensor* grad_input, TorchTensor* grad_weight,
                            TorchTensor* grad_bias);
 
+// --- Grid sampling ---
+
+// 2D grid sampling (bilinear interpolation).
+// input: (N, C, H, W), grid: (N, H_out, W_out, 2).
+// mode: 0=bilinear, 1=nearest, 2=bicubic.
+// padding_mode: 0=zeros, 1=border, 2=reflection.
+// align_corners: 0 or 1.
+char* godl_grid_sample(TorchTensor input, TorchTensor grid,
+                       int mode, int padding_mode, int align_corners,
+                       TorchTensor* result);
+
+// 2D grid sampling backward. Returns grad_input and grad_grid.
+char* godl_grid_sample_backward(TorchTensor grad_output,
+                                TorchTensor input, TorchTensor grid,
+                                int mode, int padding_mode, int align_corners,
+                                TorchTensor* grad_input, TorchTensor* grad_grid);
+
 // --- Device operations ---
 
 // Move tensor to a different device. Returns a new tensor.
