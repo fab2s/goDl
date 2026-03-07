@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/fab2s/goDl/nn"
 )
@@ -23,6 +24,27 @@ import (
 //	g, _ := graph.From(encoder).Through(decoder).Build()
 //	fmt.Println(g.DOT())
 func (g *Graph) DOT() string {
+	return g.buildDOT(nil)
+}
+
+// DOTWithProfile returns a timing-annotated DOT representation using
+// the most recent [Profile] from a profiled Forward call. Nodes are
+// color-coded green→yellow→red by relative execution time, with
+// durations shown in labels and parallelism metrics on level clusters.
+//
+// Returns the structural DOT (same as [Graph.DOT]) if no profile is
+// available.
+//
+//	g.EnableProfiling()
+//	g.Forward(input)
+//	fmt.Println(g.DOTWithProfile())
+func (g *Graph) DOTWithProfile() string {
+	return g.buildDOT(g.lastProfile)
+}
+
+// buildDOT generates the DOT string. When profile is non-nil, nodes
+// are annotated with timing data and colored by relative duration.
+func (g *Graph) buildDOT(profile *Profile) string {
 	var b strings.Builder
 	b.WriteString("digraph G {\n")
 	b.WriteString("  rankdir=TB;\n")
@@ -31,6 +53,24 @@ func (g *Graph) DOT() string {
 	b.WriteString("  edge [fontname=\"Helvetica\" fontsize=9];\n")
 	b.WriteString("  compound=true;\n") // needed for edges to/from clusters
 	b.WriteString("\n")
+
+	// Build timing lookups from profile.
+	nodeTimings := make(map[string]time.Duration)
+	levelTimings := make(map[int]*LevelTiming)
+	var maxDuration time.Duration
+	if profile != nil {
+		for i := range profile.Nodes {
+			n := &profile.Nodes[i]
+			nodeTimings[n.ID] = n.Duration
+			if n.Duration > maxDuration {
+				maxDuration = n.Duration
+			}
+		}
+		for i := range profile.Levels {
+			l := &profile.Levels[i]
+			levelTimings[l.Index] = l
+		}
+	}
 
 	// Build reverse tag lookup: nodeID → []tagName.
 	nodeTags := make(map[string][]string)
@@ -66,7 +106,17 @@ func (g *Graph) DOT() string {
 	// Emit nodes grouped by execution level.
 	for i, level := range g.levels {
 		b.WriteString(fmt.Sprintf("  subgraph cluster_level_%d {\n", i))
-		b.WriteString(fmt.Sprintf("    label=\"level %d\";\n", i))
+
+		// Level label: add timing and parallelism when profiled.
+		if lt, ok := levelTimings[i]; ok {
+			label := fmt.Sprintf("level %d  %v", i, lt.WallClock.Round(time.Microsecond))
+			if lt.NumNodes > 1 {
+				label += fmt.Sprintf("  ×%.1f", lt.Parallelism())
+			}
+			b.WriteString(fmt.Sprintf("    label=%q;\n", label))
+		} else {
+			b.WriteString(fmt.Sprintf("    label=\"level %d\";\n", i))
+		}
 		b.WriteString("    style=dashed; color=\"#999999\"; fontcolor=\"#999999\";\n")
 		b.WriteString("    rank=same;\n")
 
@@ -76,6 +126,15 @@ func (g *Graph) DOT() string {
 			} else {
 				label := nodeLabel(node, nodeTags[node.id])
 				shape, fill := nodeStyle(node, inputNodes[node.id], outputNodes[node.id])
+
+				// Annotate with timing if profiled.
+				if d, ok := nodeTimings[node.id]; ok {
+					label += fmt.Sprintf("\n%v", d.Round(time.Microsecond))
+					if maxDuration > 0 {
+						fill = heatColor(float64(d) / float64(maxDuration))
+					}
+				}
+
 				b.WriteString(fmt.Sprintf("    %q [label=%q shape=%s fillcolor=%q];\n",
 					node.id, label, shape, fill))
 			}
@@ -108,6 +167,12 @@ func (g *Graph) DOT() string {
 			writerID, s.readerID, "#e67e22", "state:"+s.name, "#e67e22"))
 	}
 
+	// Add total timing as a graph label when profiled.
+	if profile != nil {
+		fmt.Fprintf(&b, "\n  label=%q;\n  labelloc=t;\n  fontsize=14;\n",
+			fmt.Sprintf("Forward: %v", profile.Total.Round(time.Microsecond)))
+	}
+
 	b.WriteString("}\n")
 	return b.String()
 }
@@ -123,12 +188,26 @@ func (g *Graph) DOT() string {
 //	g.SVG("graph.svg")                    // write to file
 //	g.SVG("docs/architecture.svg")        // write to path
 func (g *Graph) SVG(path ...string) ([]byte, error) {
+	return g.renderSVG(g.DOT(), path...)
+}
+
+// SVGWithProfile renders a timing-annotated SVG using the most recent
+// [Profile]. Nodes are color-coded by execution time. See
+// [Graph.DOTWithProfile] for details.
+//
+//	g.EnableProfiling()
+//	g.Forward(input)
+//	g.SVGWithProfile("profile.svg")
+func (g *Graph) SVGWithProfile(path ...string) ([]byte, error) {
+	return g.renderSVG(g.DOTWithProfile(), path...)
+}
+
+func (g *Graph) renderSVG(dot string, path ...string) ([]byte, error) {
 	if _, err := exec.LookPath("dot"); err != nil {
 		return nil, fmt.Errorf("graph: SVG rendering requires Graphviz (dot); " +
 			"install with: apt install graphviz (Ubuntu), brew install graphviz (macOS)")
 	}
 
-	dot := g.DOT()
 	cmd := exec.Command("dot", "-Tsvg")
 	cmd.Stdin = strings.NewReader(dot)
 
@@ -363,6 +442,32 @@ func paramCount(params []*nn.Parameter) int64 {
 		total += p.Data().Numel()
 	}
 	return total
+}
+
+// heatColor returns a hex color interpolated from green (#27ae60) through
+// yellow (#f39c12) to red (#e74c3c) based on ratio (0.0 to 1.0).
+func heatColor(ratio float64) string {
+	if ratio < 0 {
+		ratio = 0
+	}
+	if ratio > 1 {
+		ratio = 1
+	}
+	var r, g, b float64
+	if ratio < 0.5 {
+		// green → yellow
+		t := ratio * 2
+		r = 0x27 + t*(0xf3-0x27)
+		g = 0xae + t*(0x9c-0xae)
+		b = 0x60 + t*(0x12-0x60)
+	} else {
+		// yellow → red
+		t := (ratio - 0.5) * 2
+		r = 0xf3 + t*(0xe7-0xf3)
+		g = 0x9c + t*(0x4c-0x9c)
+		b = 0x12 + t*(0x3c-0x12)
+	}
+	return fmt.Sprintf("#%02x%02x%02x", int(r), int(g), int(b))
 }
 
 // formatCount formats a parameter count with K/M suffixes for readability.

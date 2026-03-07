@@ -186,29 +186,29 @@
 <path fill="none" stroke="#2c3e50" d="M205,-2310.17C205,-2296.94 205,-2278.42 205,-2263.14"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" points="208.5,-2262.7 205,-2252.7 201.5,-2262.7 208.5,-2262.7"/>
 </g>
-<!-- Graph_4 -->
+<!-- Graph_3 -->
 <g id="node5" class="node">
-<title>Graph_4</title>
+<title>Graph_3</title>
 <polygon fill="#d6eaf8" stroke="black" points="261,-2158.48 177,-2158.48 177,-2122.48 261,-2122.48 261,-2158.48"/>
 <text text-anchor="middle" x="219" y="-2143.68" font-family="Helvetica,sans-Serif" font-size="11.00">Graph (sub)</text>
 <text text-anchor="middle" x="219" y="-2131.68" font-family="Helvetica,sans-Serif" font-size="11.00">[88 params]</text>
 </g>
-<!-- LayerNorm_2&#45;&gt;Graph_4 -->
-<g id="edge8" class="edge">
-<title>LayerNorm_2&#45;&gt;Graph_4</title>
+<!-- LayerNorm_2&#45;&gt;Graph_3 -->
+<g id="edge7" class="edge">
+<title>LayerNorm_2&#45;&gt;Graph_3</title>
 <path fill="none" stroke="#2c3e50" d="M207.63,-2216.17C209.67,-2202.81 212.52,-2184.06 214.86,-2168.69"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" points="218.33,-2169.11 216.38,-2158.7 211.41,-2168.06 218.33,-2169.11"/>
 </g>
-<!-- Graph_3 -->
+<!-- Graph_4 -->
 <g id="node6" class="node">
-<title>Graph_3</title>
+<title>Graph_4</title>
 <polygon fill="#d6eaf8" stroke="black" points="159,-2158.48 75,-2158.48 75,-2122.48 159,-2122.48 159,-2158.48"/>
 <text text-anchor="middle" x="117" y="-2143.68" font-family="Helvetica,sans-Serif" font-size="11.00">Graph (sub)</text>
 <text text-anchor="middle" x="117" y="-2131.68" font-family="Helvetica,sans-Serif" font-size="11.00">[88 params]</text>
 </g>
-<!-- LayerNorm_2&#45;&gt;Graph_3 -->
-<g id="edge7" class="edge">
-<title>LayerNorm_2&#45;&gt;Graph_3</title>
+<!-- LayerNorm_2&#45;&gt;Graph_4 -->
+<g id="edge8" class="edge">
+<title>LayerNorm_2&#45;&gt;Graph_4</title>
 <path fill="none" stroke="#2c3e50" d="M188.45,-2216.17C174.93,-2202.04 155.65,-2181.88 140.53,-2166.07"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" points="142.92,-2163.51 133.48,-2158.7 137.86,-2168.35 142.92,-2163.51"/>
 </g>
@@ -218,15 +218,15 @@
 <polygon fill="#eaecee" stroke="black" points="204,-2064.48 122,-2064.48 122,-2028.48 204,-2028.48 204,-2064.48"/>
 <text text-anchor="middle" x="163" y="-2043.68" font-family="Helvetica,sans-Serif" font-size="11.00">meanMerge</text>
 </g>
-<!-- Graph_4&#45;&gt;meanMerge_5 -->
-<g id="edge10" class="edge">
-<title>Graph_4&#45;&gt;meanMerge_5</title>
-<path fill="none" stroke="#2c3e50" d="M208.47,-2122.17C200.1,-2108.42 188.26,-2088.98 178.76,-2073.37"/>
-<polygon fill="#2c3e50" stroke="#2c3e50" points="181.68,-2071.42 173.49,-2064.7 175.7,-2075.06 181.68,-2071.42"/>
-</g>
 <!-- Graph_3&#45;&gt;meanMerge_5 -->
 <g id="edge9" class="edge">
 <title>Graph_3&#45;&gt;meanMerge_5</title>
+<path fill="none" stroke="#2c3e50" d="M208.47,-2122.17C200.1,-2108.42 188.26,-2088.98 178.76,-2073.37"/>
+<polygon fill="#2c3e50" stroke="#2c3e50" points="181.68,-2071.42 173.49,-2064.7 175.7,-2075.06 181.68,-2071.42"/>
+</g>
+<!-- Graph_4&#45;&gt;meanMerge_5 -->
+<g id="edge10" class="edge">
+<title>Graph_4&#45;&gt;meanMerge_5</title>
 <path fill="none" stroke="#2c3e50" d="M125.65,-2122.17C132.46,-2108.55 142.07,-2089.34 149.83,-2073.81"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" points="153.04,-2075.21 154.39,-2064.7 146.78,-2072.08 153.04,-2075.21"/>
 </g>
@@ -357,29 +357,29 @@
 <path fill="none" stroke="#2c3e50" d="M136,-1078.81C136,-1065.67 136,-1047.17 136,-1031.4"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" points="139.5,-1031.01 136,-1021.01 132.5,-1031.01 139.5,-1031.01"/>
 </g>
-<!-- Linear_16 -->
+<!-- Linear_17 -->
 <g id="node17" class="node">
-<title>Linear_16</title>
+<title>Linear_17</title>
 <polygon fill="#eaecee" stroke="black" points="129,-918.98 45,-918.98 45,-882.98 129,-882.98 129,-918.98"/>
 <text text-anchor="middle" x="87" y="-904.18" font-family="Helvetica,sans-Serif" font-size="11.00">Linear</text>
 <text text-anchor="middle" x="87" y="-892.18" font-family="Helvetica,sans-Serif" font-size="11.00">[72 params]</text>
 </g>
-<!-- loop_14&#45;&gt;Linear_16 -->
-<g id="edge22" class="edge">
-<title>loop_14&#45;&gt;Linear_16</title>
+<!-- loop_14&#45;&gt;Linear_17 -->
+<g id="edge23" class="edge">
+<title>loop_14&#45;&gt;Linear_17</title>
 <path fill="none" stroke="#2c3e50" d="M125.13,-976.67C117.79,-962.31 108.08,-943.27 100.29,-928.01"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" points="103.39,-926.38 95.72,-919.07 97.15,-929.56 103.39,-926.38"/>
 </g>
-<!-- Linear_17 -->
+<!-- Linear_16 -->
 <g id="node18" class="node">
-<title>Linear_17</title>
+<title>Linear_16</title>
 <polygon fill="#eaecee" stroke="black" points="231,-918.98 147,-918.98 147,-882.98 231,-882.98 231,-918.98"/>
 <text text-anchor="middle" x="189" y="-904.18" font-family="Helvetica,sans-Serif" font-size="11.00">Linear</text>
 <text text-anchor="middle" x="189" y="-892.18" font-family="Helvetica,sans-Serif" font-size="11.00">[72 params]</text>
 </g>
-<!-- loop_14&#45;&gt;Linear_17 -->
-<g id="edge23" class="edge">
-<title>loop_14&#45;&gt;Linear_17</title>
+<!-- loop_14&#45;&gt;Linear_16 -->
+<g id="edge22" class="edge">
+<title>loop_14&#45;&gt;Linear_16</title>
 <path fill="none" stroke="#2c3e50" d="M147.76,-976.67C155.69,-962.31 166.2,-943.27 174.63,-928.01"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" points="177.8,-929.51 179.56,-919.07 171.67,-926.13 177.8,-929.51"/>
 </g>
@@ -408,15 +408,15 @@
 <ellipse fill="#d5dbdb" stroke="black" cx="189" cy="-762.46" rx="53.54" ry="53.54"/>
 <text text-anchor="middle" x="189" y="-759.66" font-family="Helvetica,sans-Serif" font-size="11.00">gated_merge</text>
 </g>
-<!-- Linear_16&#45;&gt;gated_merge_18 -->
-<g id="edge25" class="edge">
-<title>Linear_16&#45;&gt;gated_merge_18</title>
-<path fill="none" stroke="#7f8c8d" d="M99.71,-882.96C112.57,-865.75 133.08,-838.3 151.2,-814.04"/>
-<polygon fill="#7f8c8d" stroke="#7f8c8d" points="154.06,-816.07 157.24,-805.96 148.46,-811.88 154.06,-816.07"/>
-</g>
 <!-- Linear_17&#45;&gt;gated_merge_18 -->
 <g id="edge26" class="edge">
 <title>Linear_17&#45;&gt;gated_merge_18</title>
+<path fill="none" stroke="#7f8c8d" d="M99.71,-882.96C112.57,-865.75 133.08,-838.3 151.2,-814.04"/>
+<polygon fill="#7f8c8d" stroke="#7f8c8d" points="154.06,-816.07 157.24,-805.96 148.46,-811.88 154.06,-816.07"/>
+</g>
+<!-- Linear_16&#45;&gt;gated_merge_18 -->
+<g id="edge25" class="edge">
+<title>Linear_16&#45;&gt;gated_merge_18</title>
 <path fill="none" stroke="#7f8c8d" d="M189,-882.96C189,-868.59 189,-847.07 189,-826.24"/>
 <polygon fill="#7f8c8d" stroke="#7f8c8d" points="192.5,-826.1 189,-816.1 185.5,-826.1 192.5,-826.1"/>
 </g>

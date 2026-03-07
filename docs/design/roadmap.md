@@ -461,6 +461,55 @@ integration.
 
 ---
 
+## Phase 5d: Training Visualization
+
+The profiling and observation data is already collected — this phase
+renders it. Built incrementally alongside the FBRL port (Tier 1+2
+provide immediate value for multi-head convergence debugging).
+
+### Tier 1: Timing-annotated DOT
+
+Overlay profiling data on the existing DOT graph:
+
+- Color-code nodes green→yellow→red by relative execution time
+- Show timing in labels alongside parameter counts
+- Highlight the critical path (slowest chain through levels)
+- Show parallelism efficiency on level cluster labels
+
+This is ~50 lines on top of the existing `DOT()` infrastructure.
+
+### Tier 2: Training curves
+
+Render epoch history as self-contained HTML or SVG — no external deps:
+
+```go
+g.PlotHTML("run.html", "loss", "head_0", "head_1", "head_2")
+```
+
+A single HTML file with inline JS canvas. Open in browser, see all
+metrics over time. TagGroup-aware — plot all group members on one chart.
+Can auto-generate via `OnFlush` hook every N epochs.
+
+Also: `ExportTrends("metrics.csv")` for external analysis tools.
+
+### Tier 3: Live dashboard
+
+Go-native real-time training monitor. A goroutine serving HTTP with
+SSE/WebSocket pushing updates from the existing hook infrastructure:
+
+```go
+dash := graph.ServeDashboard(g, ":8080")
+defer dash.Close()
+// training loop — dashboard auto-updates via OnFlush/OnProfile
+```
+
+Single embedded HTML file (Go 1.16+ `embed`). No npm, no bundler, no
+separate process. Python's equivalent (TensorBoard) requires a separate
+server, custom logging format, and can't show graph-internal metrics
+like per-node timing or loop iteration counts.
+
+---
+
 ## Phase 6: Prove It
 
 ### Goal
@@ -548,8 +597,10 @@ Phase 3 (Layers & Optimizers) ✅   Phase 4 (Graph Engine) ✅
                v
     Phase 5c (Numerical robustness / higher-order grads)
                │
+    Phase 5d (Training viz — Tier 1+2 built during FBRL)
+               │
                v
-    Phase 6 (FBRL port / benchmark)
+    Phase 6 (FBRL port / benchmark) ← 5c/5d feed into this
                │
                v
     Phase 7 (Multi-GPU scaling)

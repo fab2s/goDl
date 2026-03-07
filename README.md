@@ -75,7 +75,7 @@ Requirements: Docker (with NVIDIA Container Toolkit for GPU support).
 git clone https://github.com/fab2s/goDl.git
 cd goDl
 make image    # build dev container (Go + libtorch + CUDA)
-make test     # run all 351 tests (CPU + CUDA)
+make test     # run all 365 tests (CPU + CUDA)
 make test-cpu # run without GPU
 make doc      # local doc server (pkg.go.dev style)
 make shell    # interactive shell in container
@@ -251,11 +251,21 @@ and graceful training interruption — all impossible or clunky in Python.
 ```go
 fmt.Println(g.DOT())          // Graphviz DOT with parameter counts
 svg, _ := g.SVG("model.svg")  // render to SVG
+
+// Timing-annotated: nodes colored green→yellow→red by execution time.
+g.EnableProfiling()
+g.Forward(input)
+g.SVGWithProfile("profile.svg")
+
+// Training curves as self-contained HTML (open in any browser).
+g.PlotHTML("training.html", "loss", "head")  // expands TagGroups
+g.ExportTrends("metrics.csv", "loss")        // CSV for external tools
 ```
 
 Node shapes indicate type (input, output, loop, map, switch, activation,
 normalization). Parameter counts appear on each node. Forward-ref state
-loops are shown as dotted edges.
+loops are shown as dotted edges. Profiled graphs show per-node durations
+and parallelism efficiency per level.
 
 ### Numerical Verification
 
@@ -263,7 +273,7 @@ Every differentiable path is verified against finite-difference gradients:
 - 32 autograd op-level checks (every op + compositions)
 - 10 module-level checks (every NN module, input + parameter gradients)
 - 11 exact optimizer step verifications (SGD, Adam, AdamW)
-- 351 tests total, all passing with race detector
+- 365 tests total, all passing with race detector
 
 ## Why Go for Deep Learning?
 
