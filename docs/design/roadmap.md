@@ -42,11 +42,11 @@ Long-term stretch goal: translate most Python DL scripts into Go equivalents.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  User Code / Model Definitions                          │  Phase 5+
+│  User Code / Model Definitions                          │  Phase 6+
 ├─────────────────────────────────────────────────────────┤
 │  Graph Engine (composition, branching, loops, parallel)  │  Phase 4  ✅
 ├─────────────────────────────────────────────────────────┤
-│  Layers & Optimizers (Linear, Conv, GRU, Adam, SGD)     │  Phase 3  🔧
+│  Layers & Optimizers (Linear, Conv, GRU, Adam, SGD)     │  Phase 3  ✅
 ├─────────────────────────────────────────────────────────┤
 │  Autograd Engine (Go-native, reverse-mode AD)           │  Phase 2  ✅
 ├─────────────────────────────────────────────────────────┤
@@ -144,9 +144,9 @@ topological order. libtorch handles the forward math; Go handles the graph.
 
 ---
 
-## Phase 3: Layers & Optimizers 🔧
+## Phase 3: Layers & Optimizers ✅
 
-### Status: In progress
+### Status: Complete
 
 `nn/` — neural network building blocks on top of tensor and autograd.
 
@@ -158,11 +158,10 @@ topological order. libtorch handles the forward math; Go handles the graph.
 - **Loss functions**: `MSELoss`, `CrossEntropyLoss`
 - **Optimizers**: `SGD`, `Adam`, `AdamW`
 - **Parameter** type with gradient tracking
-
-### Remaining
-
-- **Data loading**: parallel data pipelines with prefetching
-- **Data loading**: parallel data pipelines with prefetching
+- **Gradient clipping**: `ClipGradNorm`, `ClipGradValue`
+- **Weight initialization**: `KaimingUniform`, `KaimingNormal`, `XavierUniform`, `XavierNormal`
+- **Checkpoints**: `SaveParameters`, `LoadParameters` (binary format with validation)
+- **Data loading**: `Dataset` interface, `TensorDataset`, `Loader` with parallel prefetch and shuffle
 
 ### Module interface
 
@@ -263,25 +262,108 @@ outer, _ := From(inner).Through(l2).Build()  // inner graph is a node
 - **onTarget**: tracks which node Using() wires to. Set by Through/Gate/Merge/
   Also/Loop.For. After Split: wires to ALL branch modules.
 
+### Completed since initial plan
+
+- **Conditional execution (Switch)**: hard routing — router selects one branch,
+  only that branch executes. `FixedSelector`, `ArgmaxSelector` built-in.
+- **Dynamic loops (While/Until)**: condition-based iteration with Module-based
+  halt conditions. `ThresholdHalt`, `LearnedHalt` (ACT pattern) built-in.
+- **Map**: per-element processing with `Each()`, `Over(tag)`, `Slices(n)`,
+  and `Batched()` fast path.
+- **Parameter freezing**: `Freeze`/`Unfreeze`/`ZeroFrozenGrads` by tag name.
+- **Visualization**: `DOT()` and `SVG()` output with typed node shapes, parameter
+  counts, execution levels, and forward-ref state loops.
+- **RefValidator**: build-time validation of Using ref contracts.
+- **Graph primitives**: `StateAdd`, `SoftmaxRouter`, `SigmoidRouter`, `Reshape`.
+- **Documentation**: 8 progressive tutorials, design docs, complete examples.
+- **Test coverage**: 259 tests including numerical gradient checks (autograd ops,
+  all NN modules, exact optimizer step verification), all passing with race detector.
+
 ### Remaining
 
-- **Conditional execution**: hard routing based on tensor values (execute only
-  the taken branch). Currently all branches execute; gate provides soft routing.
-- **Dynamic loops**: repeat until a condition rather than fixed N.
-- **Graph serialization**: save/load entire graph topologies.
+- **Graph serialization**: save/load entire graph topologies (not just parameters).
 - **Graph optimization**: operation fusion, scheduling passes.
 
 ---
 
-## Phase 5: Prove It
+## Phase 5: Training Refinements
+
+### LR Scheduling
+
+Interface wrapping optimizer, adjusts lr per step/epoch.
+Schedules: warmup, step decay, cosine decay, reduce-on-plateau.
+Self-contained in `nn/` — no stack-wide changes.
+
+### Mixed Precision
+
+Float16 forward/backward + float32 parameter updates. Three pieces:
+autocast (dtype per op), loss scaling (prevent underflow), master weights
+(float32 copies for optimizer). Requires `tensor.Half()`/`tensor.Float()`
+casting, dtype plumbing through shim. Moderate effort, touches every layer
+but no architectural changes.
+
+---
+
+## Phase 5b: Interruption & Control Flow
+
+Go has genuine advantages over Python for computation control — goroutine
+cancellation, context propagation, and signal handling. This phase exploits
+them for patterns that are awkward or impossible in PyTorch.
+
+### Context-Aware Forward
+
+Thread `context.Context` through graph execution. This enables:
+
+- **Wall-clock timeouts for dynamic loops**: While/Until can run up to
+  `maxIter` times. In serving, you need a time bound, not just an iteration
+  cap. Context cancellation aborts mid-loop and returns the best state so far.
+- **Parallel branch cancellation**: Split branches run as goroutines. If one
+  errors or a context expires, the others are cancelled immediately (currently
+  they all run to completion).
+
+Implementation: add `ForwardCtx(ctx, inputs...)` to Graph, check `ctx.Err()`
+between topological levels and loop iterations. Low cost, high practical value.
+
+This would be genuinely novel — PyTorch has no equivalent because Python's
+threading model doesn't support cooperative cancellation.
+
+### Early Exit
+
+Models that can skip remaining layers when confidence is high. Different from
+Switch (which picks one branch) — this skips the *rest of the chain*:
+
+```go
+g, err := graph.From(encoder).
+    Through(layer1).EarlyExit(exitHead1, confidenceProbe).
+    Through(layer2).EarlyExit(exitHead2, confidenceProbe).
+    Through(layer3).
+    Build()
+```
+
+Real use cases: BranchyNet, early-exit transformers, inference cost reduction.
+Each exit point needs an exit head producing the same output shape as the final
+layer. The graph builder can wire these naturally as an extension of the
+existing conditional execution primitives.
+
+### Graceful Training Interruption
+
+Auto-checkpoint on Ctrl+C using Go's signal handling:
+
+```go
+ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+```
+
+Combined with the existing checkpoint system, a `TrainLoop` utility could
+handle signals + periodic auto-save. Mostly a training loop concern rather
+than a graph concern.
+
+---
+
+## Phase 6: Prove It
 
 ### Goal
 
 Port the FBRL reading model from Python to goDl. Benchmark against PyTorch.
-
-### Prerequisites
-
-Phase 3 completions needed: data loading pipeline.
 
 ### Deliverables
 
@@ -292,12 +374,50 @@ Phase 3 completions needed: data loading pipeline.
 
 ---
 
-## Phase 6+: The Long Road
+## Phase 7: Multi-GPU Scaling
+
+The composable graph architecture (sub-graphs, Map, Split, Gate, Switch)
+is designed for specialized multi-component models. Multi-GPU makes it
+practical for real workloads — not LLM-scale, but the vast middle ground
+of domain-specific and multi-modal training.
+
+**Level 1: Single-host data parallelism (KISS start)**
+- `tensor.To(device)` — move tensors between CPU/GPUs (libtorch shim addition)
+- `graph.DataParallel(model, gpus)` — wrapper that manages replicas
+- Gradient sync via CPU: copy grads to CPU → average → copy back
+- Go goroutines handle per-GPU forward/backward — no process spawning
+- PCIe round-trip is the bottleneck, but fine for small-to-medium models
+- Training API stays identical: dp.Forward → loss → Backward → Step
+
+**Level 2: NCCL gradient sync (same host, faster)**
+- Add NCCL allreduce to shim — one C function binding
+- Replace CPU-mediated averaging with direct GPU↔GPU sync (NVLink/PCIe)
+- Same DataParallel API, swap the sync backend
+- Significant speedup for gradient-heavy models
+
+**Level 3: Multi-host distributed (cloud)**
+- Abstract gradient sync behind an interface (already done at Level 1-2)
+- Swap NCCL for gRPC-based ring-allreduce between nodes
+- Go's native gRPC + goroutines make this natural — no external launchers
+- Ring-allreduce: each node sends gradient shard to neighbor, N-1 rounds
+- Overlap communication with backward computation for efficiency
+- Fault tolerance: checkpoint + restart on node failure
+
+**Level 4: Model parallelism (specialized)**
+- Pipeline parallelism: split graph stages across GPUs (graph levels → devices)
+- The graph's topological level structure maps naturally to pipeline stages
+- Tensor parallelism: split individual layers (e.g. large Linear across GPUs)
+- Only needed for models that don't fit on a single GPU
+
+---
+
+## Phase 8+: The Long Road
 
 Stretch goals. Each is a project in itself.
 
+- **Attention mechanisms**: MultiHeadAttention, cross-attention as graph primitives
+- **Graph serialization**: save/load entire graph topologies (not just parameters)
 - **Model zoo**: standard architectures (ResNet, BERT, GPT) as reference implementations
-- **Distributed training**: multi-GPU, multi-node via NCCL
 - **ONNX import/export**: interop with the broader ML ecosystem
 - **Python model translation**: parse PyTorch model code, generate goDl equivalent
 - **Custom CUDA kernels**: when libtorch ops aren't enough
@@ -317,15 +437,22 @@ Phase 1b (Tensor API) ✅
 Phase 2 (Autograd) ✅ ──────────────────┐
     │                                    │
     v                                    v
-Phase 3 (Layers & Optimizers) 🔧   Phase 4 (Graph Engine) ✅
+Phase 3 (Layers & Optimizers) ✅   Phase 4 (Graph Engine) ✅
     │                                    │
     └──────────┬─────────────────────────┘
                v
-         Phase 5 (FBRL port / benchmark)
+    Phase 5 (Training refinements) + Phase 5b (Interruption)
+               │
+               v
+    Phase 6 (FBRL port / benchmark)
+               │
+               v
+    Phase 7 (Multi-GPU scaling)
 ```
 
-Phase 3 is the main remaining prerequisite for Phase 5. The graph engine
-is ready — it needs more layers to express real architectures.
+The core stack (Phases 1-4) is complete. Phase 5/5b adds training
+refinements and Go-native control flow. Phase 6 proves the thesis
+with a real benchmark.
 
 ---
 

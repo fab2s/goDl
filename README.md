@@ -25,7 +25,7 @@ goDl's fluent graph builder lets you describe complex architectures as
 readable data flow — no boilerplate, no graph construction commands.
 
 ```go
-model, _ := graph.From(nn.MustLinear(2, 16)).     // input projection
+model, err := graph.From(nn.MustLinear(2, 16)).   // input projection
     Through(nn.NewGELU()).                          // activation
     Through(nn.MustLayerNorm(16)).                  // normalization
     Also(nn.MustLinear(16, 16)).                    // residual connection
@@ -40,7 +40,7 @@ implements `nn.Module` — you can nest it inside other graphs.
 Things get interesting when architectures get complex:
 
 ```go
-g, _ := graph.From(encoder).Tag("encoded").                 // tag for later
+g, err := graph.From(encoder).Tag("encoded").                // tag for later
     Split(headA, headB, headC).Merge(graph.Mean()).          // multi-head + merge
     Loop(refinementBlock).For(3).Tag("refined").             // iterate 3 times
     Gate(router, expertA, expertB).Using("encoded").         // soft routing with context
@@ -82,7 +82,7 @@ make shell    # interactive shell in container
 // Task: learn cumulative sum — [a, b] → [a, a+b]
 
 // Build the model.
-model, _ := graph.From(nn.MustLinear(2, 16)).
+model, err := graph.From(nn.MustLinear(2, 16)).
     Through(nn.NewGELU()).
     Through(nn.MustLayerNorm(16)).
     Also(nn.MustLinear(16, 16)).

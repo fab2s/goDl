@@ -24,6 +24,14 @@ g, err := graph.From(nn.MustLinear(4, 8)).
 the graph and returns a `*graph.Graph` that implements `nn.Module` — it
 has `Forward` and `Parameters` just like any other module.
 
+> **Note for PyTorch users**: In Python you write
+> `model = nn.Sequential(...)` and errors raise exceptions implicitly.
+> In Go, `Build()` returns `(*graph.Graph, error)` — errors are explicit
+> values you handle yourself. Throughout these tutorials you will see
+> `g, err := ... Build()` in real code and `g, _ := ... Build()` in
+> short examples where the `_` discards the error for brevity. In
+> production code, always check `err`.
+
 ```go
 input := autograd.NewVariable(inputTensor, true)
 output := g.Forward(input)
