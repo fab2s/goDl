@@ -172,6 +172,35 @@ func FromInt64(data []int64, shape []int64, device Device) (*Tensor, error) {
 	return &Tensor{handle: handle}, nil
 }
 
+// Linspace creates a 1D tensor with evenly spaced values from start to end.
+func Linspace(start, end float64, steps int64, dtype DType, device Device) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_linspace(
+		C.double(start), C.double(end), C.int64_t(steps),
+		C.int(dtype), C.int(device),
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Expand broadcasts a tensor to a larger shape. -1 keeps the existing size.
+func (t *Tensor) Expand(shape []int64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_expand(
+		t.handle,
+		(*C.int64_t)(unsafe.Pointer(&shape[0])),
+		C.int(len(shape)),
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
 // --- Tensor lifecycle ---
 
 // Free releases the underlying libtorch tensor. Must be called exactly once.
@@ -677,6 +706,88 @@ func Conv2dBackward(gradOutput, input, weight *Tensor, stride, padding, dilation
 		gradBias = &Tensor{handle: gbHandle}
 	}
 	return gradInput, gradWeight, gradBias, nil
+}
+
+// --- Transposed convolution ---
+
+// ConvTranspose2d performs a 2D transposed convolution. bias may be nil.
+func ConvTranspose2d(input, weight, bias *Tensor, stride, padding, outputPadding, dilation []int64, groups int64) (*Tensor, error) {
+	var biasHandle C.TorchTensor
+	if bias != nil {
+		biasHandle = bias.handle
+	}
+	var handle C.TorchTensor
+	cerr := C.godl_conv_transpose2d(
+		input.handle, weight.handle, biasHandle,
+		(*C.int64_t)(unsafe.Pointer(&stride[0])),
+		(*C.int64_t)(unsafe.Pointer(&padding[0])),
+		(*C.int64_t)(unsafe.Pointer(&outputPadding[0])),
+		(*C.int64_t)(unsafe.Pointer(&dilation[0])),
+		C.int64_t(groups),
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// ConvTranspose2dBackward computes gradients for a 2D transposed convolution.
+func ConvTranspose2dBackward(gradOutput, input, weight *Tensor, stride, padding, outputPadding, dilation []int64, groups int64, computeBias bool) (gradInput, gradWeight, gradBias *Tensor, err error) {
+	var giHandle, gwHandle, gbHandle C.TorchTensor
+	cb := C.int(0)
+	if computeBias {
+		cb = 1
+	}
+	cerr := C.godl_conv_transpose2d_backward(
+		gradOutput.handle, input.handle, weight.handle,
+		(*C.int64_t)(unsafe.Pointer(&stride[0])),
+		(*C.int64_t)(unsafe.Pointer(&padding[0])),
+		(*C.int64_t)(unsafe.Pointer(&outputPadding[0])),
+		(*C.int64_t)(unsafe.Pointer(&dilation[0])),
+		C.int64_t(groups),
+		cb,
+		&giHandle, &gwHandle, &gbHandle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, nil, nil, err
+	}
+	gradInput = &Tensor{handle: giHandle}
+	gradWeight = &Tensor{handle: gwHandle}
+	if computeBias {
+		gradBias = &Tensor{handle: gbHandle}
+	}
+	return gradInput, gradWeight, gradBias, nil
+}
+
+// --- Adaptive average pooling ---
+
+// AdaptiveAvgPool2d performs 2D adaptive average pooling.
+// Input: (N, C, H, W). outputSize: [H_out, W_out].
+func AdaptiveAvgPool2d(input *Tensor, outputSize []int64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_adaptive_avg_pool2d(
+		input.handle,
+		(*C.int64_t)(unsafe.Pointer(&outputSize[0])),
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// AdaptiveAvgPool2dBackward computes gradients for adaptive avg pool.
+func AdaptiveAvgPool2dBackward(gradOutput, input *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_adaptive_avg_pool2d_backward(
+		gradOutput.handle, input.handle,
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
 }
 
 // --- Grid sampling ---

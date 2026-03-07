@@ -468,6 +468,89 @@ func Conv2dBackward(gradOutput, input, weight *Tensor, stride, padding, dilation
 	return gradInput, gradWeight, gradBias
 }
 
+// --- Expand (broadcast) ---
+
+// Expand broadcasts the tensor to a larger shape. -1 keeps the existing size.
+// The result shares data where possible (like a view). No gradient support needed
+// — expand is a tensor creation/shaping op used to build sampling grids.
+func (t *Tensor) Expand(shape []int64) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := t.raw.Expand(shape)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// --- Transposed convolution ---
+
+// ConvTranspose2d performs a 2D transposed convolution (deconvolution). bias may be nil.
+// Input shape: [N, C_in, H, W]. Weight shape: [C_in, C_out/groups, kH, kW].
+func (t *Tensor) ConvTranspose2d(weight, bias *Tensor, stride, padding, outputPadding, dilation []int64, groups int64) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	if !weight.valid() {
+		return weight
+	}
+	var biasRaw *libtorch.Tensor
+	if bias != nil {
+		if !bias.valid() {
+			return bias
+		}
+		biasRaw = bias.raw
+	}
+	raw, err := libtorch.ConvTranspose2d(t.raw, weight.raw, biasRaw, stride, padding, outputPadding, dilation, groups)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// ConvTranspose2dBackward computes gradients for a 2D transposed convolution.
+func ConvTranspose2dBackward(gradOutput, input, weight *Tensor, stride, padding, outputPadding, dilation []int64, groups int64, computeBias bool) (gradInput, gradWeight, gradBias *Tensor) {
+	giRaw, gwRaw, gbRaw, err := libtorch.ConvTranspose2dBackward(
+		gradOutput.raw, input.raw, weight.raw,
+		stride, padding, outputPadding, dilation, groups, computeBias,
+	)
+	if err != nil {
+		e := errTensor(err)
+		return e, e, e
+	}
+	gradInput = wrap(giRaw)
+	gradWeight = wrap(gwRaw)
+	if gbRaw != nil {
+		gradBias = wrap(gbRaw)
+	}
+	return gradInput, gradWeight, gradBias
+}
+
+// --- Adaptive average pooling ---
+
+// AdaptiveAvgPool2d performs 2D adaptive average pooling.
+// Input shape: [N, C, H, W]. Pools to outputSize [H_out, W_out].
+func (t *Tensor) AdaptiveAvgPool2d(outputSize []int64) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.AdaptiveAvgPool2d(t.raw, outputSize)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// AdaptiveAvgPool2dBackward computes the gradient for adaptive avg pool.
+func AdaptiveAvgPool2dBackward(gradOutput, input *Tensor) *Tensor {
+	raw, err := libtorch.AdaptiveAvgPool2dBackward(gradOutput.raw, input.raw)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
 // --- Grid sampling ---
 
 // GridSample performs 2D grid sampling with bilinear interpolation.

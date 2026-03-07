@@ -362,6 +362,35 @@ func TestGradCheckBroadcastMul(t *testing.T) {
 	}, []*tensor.Tensor{x, b}, 1e-2)
 }
 
+func TestGradCheckConvTranspose2d(t *testing.T) {
+	// Input [1, 1, 2, 2], weight [1, 1, 3, 3] — upsample to 4x4.
+	input, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 1, 2, 2})
+	weight, _ := tensor.FromFloat32([]float32{
+		1, 0, -1,
+		0, 1, 0,
+		-1, 0, 1,
+	}, []int64{1, 1, 3, 3})
+
+	gradCheck(t, "ConvTranspose2d", func(v []*autograd.Variable) *autograd.Variable {
+		return v[0].ConvTranspose2d(v[1], nil,
+			[]int64{1, 1}, []int64{0, 0}, []int64{0, 0}, []int64{1, 1}, 1).Sum()
+	}, []*tensor.Tensor{input, weight}, 1e-2)
+}
+
+func TestGradCheckAdaptiveAvgPool2d(t *testing.T) {
+	// Input [1, 1, 4, 4], pool to 2x2.
+	input, _ := tensor.FromFloat32([]float32{
+		1, 2, 3, 4,
+		5, 6, 7, 8,
+		9, 10, 11, 12,
+		13, 14, 15, 16,
+	}, []int64{1, 1, 4, 4})
+
+	gradCheck(t, "AdaptiveAvgPool2d", func(v []*autograd.Variable) *autograd.Variable {
+		return v[0].AdaptiveAvgPool2d([]int64{2, 2}).Sum()
+	}, []*tensor.Tensor{input}, 1e-2)
+}
+
 func TestGradCheckGridSample(t *testing.T) {
 	// Input [1, 1, 4, 4], grid [1, 2, 2, 2] — sample a 2x2 output.
 	// Use grid values well inside [-1, 1] to stay in bilinear region.
@@ -434,7 +463,8 @@ func TestGradCheckSummary(t *testing.T) {
 		"Div", "SumDim", "MeanDim", "Transpose", "Reshape",
 		"Softmax", "Select", "Narrow", "Cat", "IndexSelect",
 		"Sigmoid", "Tanh", "ReLU", "Add", "Sub", "Mul", "Matmul",
-		"Conv2d", "Conv2dBias", "GridSample", "BroadcastAdd", "BroadcastMul",
+		"Conv2d", "Conv2dBias", "ConvTranspose2d", "AdaptiveAvgPool2d",
+		"GridSample", "BroadcastAdd", "BroadcastMul",
 		"Composed: Exp(Log)", "Composed: Sigmoid(Linear)",
 		"Composed: Softmax+CE", "Composed: Reshape+Transpose",
 		"Composed: Narrow+Cat",

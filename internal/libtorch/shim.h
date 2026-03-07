@@ -40,6 +40,14 @@ char* godl_rand(int64_t* shape, int ndim, int dtype, int device,
 char* godl_from_blob(void* data, int64_t* shape, int ndim, int dtype,
                      int device, TorchTensor* result);
 
+// Create a 1D tensor with evenly spaced values.
+char* godl_linspace(double start, double end, int64_t steps, int dtype, int device,
+                    TorchTensor* result);
+
+// Expand a tensor to a larger shape (broadcast). new_shape is an ndim-element array.
+// -1 means keep that dimension's size.
+char* godl_expand(TorchTensor t, int64_t* new_shape, int ndim, TorchTensor* result);
+
 // --- Tensor lifecycle ---
 
 // Free a tensor. Must be called exactly once per tensor.
@@ -132,6 +140,34 @@ char* godl_conv2d_backward(TorchTensor grad_output, TorchTensor input,
                            int64_t groups, int compute_bias,
                            TorchTensor* grad_input, TorchTensor* grad_weight,
                            TorchTensor* grad_bias);
+
+// --- Transposed convolution ---
+
+// 2D transposed convolution (deconvolution) forward.
+// bias may be NULL. stride/padding/output_padding/dilation are 2-element arrays.
+char* godl_conv_transpose2d(TorchTensor input, TorchTensor weight, TorchTensor bias,
+                            int64_t* stride, int64_t* padding,
+                            int64_t* output_padding, int64_t* dilation,
+                            int64_t groups, TorchTensor* result);
+
+// 2D transposed convolution backward.
+char* godl_conv_transpose2d_backward(TorchTensor grad_output, TorchTensor input,
+                                     TorchTensor weight,
+                                     int64_t* stride, int64_t* padding,
+                                     int64_t* output_padding, int64_t* dilation,
+                                     int64_t groups, int compute_bias,
+                                     TorchTensor* grad_input, TorchTensor* grad_weight,
+                                     TorchTensor* grad_bias);
+
+// --- Adaptive average pooling ---
+
+// 2D adaptive average pooling. output_size is a 2-element array [H_out, W_out].
+char* godl_adaptive_avg_pool2d(TorchTensor input, int64_t* output_size,
+                               TorchTensor* result);
+
+// 2D adaptive average pooling backward.
+char* godl_adaptive_avg_pool2d_backward(TorchTensor grad_output, TorchTensor input,
+                                        TorchTensor* grad_input);
 
 // --- Grid sampling ---
 

@@ -781,6 +781,85 @@ func (v *Variable) Conv2d(weight, bias *Variable, stride, padding, dilation []in
 	return newVar(result, fn)
 }
 
+// --- Transposed convolution ---
+
+// ConvTranspose2d applies a 2D transposed convolution. bias may be nil.
+func (v *Variable) ConvTranspose2d(weight, bias *Variable, stride, padding, outputPadding, dilation []int64, groups int64) *Variable {
+	if !v.valid() {
+		return v
+	}
+	if !weight.valid() {
+		return weight
+	}
+	if bias != nil && !bias.valid() {
+		return bias
+	}
+
+	var biasT *tensor.Tensor
+	if bias != nil {
+		biasT = bias.data
+	}
+	result := v.data.ConvTranspose2d(weight.data, biasT, stride, padding, outputPadding, dilation, groups)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+
+	inputs := []*Variable{v, weight}
+	hasBias := bias != nil
+	if hasBias {
+		inputs = append(inputs, bias)
+	}
+
+	var fn *gradFn
+	if needsGrad(inputs...) {
+		savedInput := v.data
+		savedWeight := weight.data
+		fn = &gradFn{
+			name:   "ConvTranspose2dBackward",
+			inputs: inputs,
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				gi, gw, gb := tensor.ConvTranspose2dBackward(
+					grad, savedInput, savedWeight,
+					stride, padding, outputPadding, dilation, groups, hasBias,
+				)
+				grads := []*tensor.Tensor{gi, gw}
+				if hasBias {
+					grads = append(grads, gb)
+				}
+				return grads
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
+// --- Adaptive average pooling ---
+
+// AdaptiveAvgPool2d pools to the given output size.
+func (v *Variable) AdaptiveAvgPool2d(outputSize []int64) *Variable {
+	if !v.valid() {
+		return v
+	}
+
+	result := v.data.AdaptiveAvgPool2d(outputSize)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+
+	var fn *gradFn
+	if needsGrad(v) {
+		savedInput := v.data
+		fn = &gradFn{
+			name:   "AdaptiveAvgPool2dBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				return []*tensor.Tensor{tensor.AdaptiveAvgPool2dBackward(grad, savedInput)}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
 // --- Grid sampling ---
 
 // GridSample performs differentiable 2D grid sampling.

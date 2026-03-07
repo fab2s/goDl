@@ -135,6 +135,32 @@ extern "C" char* godl_from_blob(void* data, int64_t* shape, int ndim,
     }
 }
 
+extern "C" char* godl_linspace(double start, double end, int64_t steps,
+                                int dtype, int device, TorchTensor* result) {
+    try {
+        auto options = torch::TensorOptions().dtype(to_scalar_type(dtype));
+        auto t = torch::linspace(start, end, steps, options);
+        if (device == GODL_CUDA) {
+            t = t.to(torch::kCUDA);
+        }
+        *result = wrap(std::move(t));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_expand(TorchTensor t, int64_t* new_shape, int ndim,
+                              TorchTensor* result) {
+    try {
+        // expand returns a view; contiguous() makes an owned copy.
+        *result = wrap(unwrap(t).expand(make_shape(new_shape, ndim)).contiguous());
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
 // --- Tensor lifecycle ---
 
 extern "C" void godl_free_tensor(TorchTensor t) {
@@ -584,6 +610,102 @@ extern "C" char* godl_conv2d_backward(TorchTensor grad_output, TorchTensor input
         if (compute_bias) {
             *grad_bias = wrap(std::get<2>(result));
         }
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+// --- Transposed convolution ---
+
+extern "C" char* godl_conv_transpose2d(TorchTensor input, TorchTensor weight,
+                                        TorchTensor bias,
+                                        int64_t* stride, int64_t* padding,
+                                        int64_t* output_padding, int64_t* dilation,
+                                        int64_t groups, TorchTensor* result) {
+    try {
+        auto in = unwrap(input);
+        auto w = unwrap(weight);
+        c10::optional<torch::Tensor> b;
+        if (bias != nullptr) {
+            b = unwrap(bias);
+        }
+        *result = wrap(torch::conv_transpose2d(in, w, b,
+            torch::IntArrayRef(stride, 2),
+            torch::IntArrayRef(padding, 2),
+            torch::IntArrayRef(output_padding, 2),
+            groups,
+            torch::IntArrayRef(dilation, 2)));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_conv_transpose2d_backward(TorchTensor grad_output,
+                                                  TorchTensor input,
+                                                  TorchTensor weight,
+                                                  int64_t* stride, int64_t* padding,
+                                                  int64_t* output_padding,
+                                                  int64_t* dilation,
+                                                  int64_t groups, int compute_bias,
+                                                  TorchTensor* grad_input,
+                                                  TorchTensor* grad_weight,
+                                                  TorchTensor* grad_bias) {
+    try {
+        auto go_ = unwrap(grad_output);
+        auto in = unwrap(input);
+        auto w = unwrap(weight);
+
+        c10::OptionalIntArrayRef bias_sizes = c10::nullopt;
+        std::vector<int64_t> bias_sizes_vec;
+        if (compute_bias) {
+            bias_sizes_vec = {w.size(1) * groups};
+            bias_sizes = bias_sizes_vec;
+        }
+
+        auto result = at::convolution_backward(
+            go_, in, w,
+            bias_sizes,
+            torch::IntArrayRef(stride, 2),
+            torch::IntArrayRef(padding, 2),
+            torch::IntArrayRef(dilation, 2),
+            true, // transposed
+            torch::IntArrayRef(output_padding, 2),
+            groups,
+            {true, true, compute_bias != 0}
+        );
+
+        *grad_input = wrap(std::get<0>(result));
+        *grad_weight = wrap(std::get<1>(result));
+        if (compute_bias) {
+            *grad_bias = wrap(std::get<2>(result));
+        }
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+// --- Adaptive average pooling ---
+
+extern "C" char* godl_adaptive_avg_pool2d(TorchTensor input, int64_t* output_size,
+                                           TorchTensor* result) {
+    try {
+        *result = wrap(at::adaptive_avg_pool2d(
+            unwrap(input), torch::IntArrayRef(output_size, 2)));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_adaptive_avg_pool2d_backward(TorchTensor grad_output,
+                                                     TorchTensor input,
+                                                     TorchTensor* grad_input) {
+    try {
+        *grad_input = wrap(at::_adaptive_avg_pool2d_backward(
+            unwrap(grad_output), unwrap(input)));
         return nullptr;
     } catch (const std::exception& e) {
         return make_error(e.what());
