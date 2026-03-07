@@ -144,6 +144,66 @@ for loader.Next() {
 }
 ```
 
+## Observing Training
+
+Tag the nodes you want to monitor when building the graph:
+
+```go
+model, _ := graph.From(nn.MustLinear(2, 16)).
+    Through(nn.NewGELU()).
+    Through(nn.MustLinear(16, 2)).Tag("output").
+    Build()
+```
+
+### Log
+
+Print current tagged values after any Forward call:
+
+```go
+model.Forward(input)
+model.Log("output")  // output: 0.2341
+model.Log()          // all tagged values
+```
+
+The default prints to stderr. Replace it with `OnLog` for custom handling:
+
+```go
+model.OnLog(func(values map[string]*autograd.Variable) {
+    // structured logging, file output, etc.
+})
+```
+
+### Collect and Flush
+
+For epoch-level metrics, collect scalar values during the batch loop
+and flush at epoch boundaries:
+
+```go
+for epoch := range epochs {
+    loader.Reset()
+    for loader.Next() {
+        inT, tgtT := loader.Batch()
+        input := autograd.NewVariable(inT, true)
+        target := autograd.NewVariable(tgtT, false)
+
+        pred := model.Forward(input)
+        loss := nn.MSELoss(pred, target)
+
+        optimizer.ZeroGrad()
+        loss.Backward()
+        optimizer.Step()
+
+        model.Collect("output")   // snapshot current value
+    }
+    model.Flush()                 // batch mean → epoch history
+}
+```
+
+`Collect` appends the scalar value of each tagged node to a batch
+buffer. `Flush` computes the mean of the buffer, stores it in the
+epoch history, and clears the buffer. The epoch history is then
+queryable as a trend — see [Tutorial 8: Utilities](08-utilities.md#trend-based-training-control).
+
 ## Eval Mode
 
 Switch to eval mode for inference. This affects Dropout (becomes identity) and BatchNorm (uses running statistics):
@@ -311,8 +371,9 @@ func main() {
 1. **Model construction** -- the graph builder chains `From -> Through -> Also -> Through -> Build`.
 2. **Data pipeline** -- `TensorDataset` + `Loader` with scanner-style iteration.
 3. **Training loop** -- forward, loss, zeroGrad, backward, clipGrad, step.
-4. **Eval mode** -- `SetTraining(false)` + `NoGrad` for inference.
-5. **Gradient clipping** -- `ClipGradNorm` between backward and step.
+4. **Observation** -- `Collect` snapshots metrics per batch, `Flush` promotes to epoch history.
+5. **Eval mode** -- `SetTraining(false)` + `NoGrad` for inference.
+6. **Gradient clipping** -- `ClipGradNorm` between backward and step.
 
 ---
 

@@ -232,9 +232,99 @@ for _, p := range model.Parameters() {
   unusual architectures where the default leads to vanishing or
   exploding activations at init time.
 
+## Trend-based training control
+
+After collecting metrics and flushing epoch summaries (see
+[Training — Observing Training](04-training.md#observing-training)),
+query trends to make training decisions.
+
+### Trend queries
+
+Each `Flush` adds one data point (the epoch mean) to the tag's
+history. `Trend` returns a queryable view over that history:
+
+```go
+trend := g.Trend("loss")
+trend.Mean()              // mean across all flushed epochs
+trend.Slope(5)            // OLS slope over last 5 epochs
+trend.Improving(5)        // is slope negative? (loss decreasing)
+trend.Stalled(5, 1e-4)    // is |slope| below tolerance?
+trend.Converged(5, 1e-5)  // is variance below tolerance?
+```
+
+All query methods accept a window parameter: positive values limit the
+analysis to the last N data points, zero or negative uses all.
+
+### LR decay on plateau
+
+```go
+if g.Trend("loss").Stalled(10, 1e-4) {
+    currentLR := optimizer.LR()
+    optimizer.SetLR(currentLR * 0.1)
+}
+```
+
+### Conditional freezing
+
+Unfreeze a section of the model only when training shows progress:
+
+```go
+if g.Trend("loss").Improving(3) {
+    g.Unfreeze("decoder")
+}
+```
+
+### Early stopping
+
+```go
+if g.Trend("loss").Converged(5, 1e-5) {
+    break
+}
+```
+
+### Sub-graph observation
+
+When a graph contains sub-graphs (Graph-as-Module), use `Sub` to
+observe their internal tags. The sub-graph's Forward runs automatically
+as part of the parent — no separate Forward call needed:
+
+```go
+// Build a sub-graph with its own tags.
+refiner, _ := graph.From(step).Tag("residual").Build()
+
+// Compose into root graph.
+g, _ := graph.From(encoder).
+    Through(refiner).Tag("refine").
+    Through(lossModule).Tag("loss").
+    Build()
+
+// Training loop — only Forward on root.
+for epoch := range epochs {
+    for loader.Next() {
+        g.Forward(input)
+        g.Collect("loss")                    // root tag
+        g.Sub("refine").Collect("residual")  // sub-graph tag
+    }
+    g.Flush()
+    g.Sub("refine").Flush()
+}
+```
+
+### ResetTrend
+
+Clear epoch history when you need a fresh start (e.g. after unfreezing
+a section of the model and wanting to track the new training phase):
+
+```go
+g.Unfreeze("encoder")
+g.ResetTrend("loss")    // clear history for one tag
+g.ResetTrend()          // or clear all
+```
+
 ## Putting it together
 
-A complete fine-tuning script using all four utilities:
+A complete fine-tuning script using all utilities — clipping, freezing,
+checkpoints, initialization, and trend-based training control:
 
 ```go
 // Build model with tagged sections.
@@ -263,15 +353,40 @@ g.Freeze("encoder")
 optimizer := nn.NewAdam(g.Parameters(), 0.001)
 g.SetTraining(true)
 
-for epoch := 0; epoch < 100; epoch++ {
-    optimizer.ZeroGrad()
-    output := g.Forward(input)
-    loss := nn.MSELoss(output, target)
-    loss.Backward()
+// Log epoch summaries.
+g.OnFlush(func(flushed map[string]float64) {
+    fmt.Printf("epoch loss: %.6f\n", flushed["head"])
+})
 
-    nn.ClipGradNorm(g.Parameters(), 1.0)
-    g.ZeroFrozenGrads()
-    optimizer.Step()
+for epoch := 0; epoch < 100; epoch++ {
+    loader.Reset()
+    for loader.Next() {
+        inT, tgtT := loader.Batch()
+        input := autograd.NewVariable(inT, true)
+        target := autograd.NewVariable(tgtT, false)
+
+        optimizer.ZeroGrad()
+        output := g.Forward(input)
+        loss := nn.MSELoss(output, target)
+        loss.Backward()
+
+        nn.ClipGradNorm(g.Parameters(), 1.0)
+        g.ZeroFrozenGrads()
+        optimizer.Step()
+
+        g.Collect("head")
+    }
+    g.Flush()
+
+    // Unfreeze encoder once loss is improving.
+    if epoch > 5 && g.Trend("head").Improving(3) {
+        g.Unfreeze("encoder")
+    }
+
+    // Early stop when converged.
+    if g.Trend("head").Converged(5, 1e-5) {
+        break
+    }
 }
 
 // Save fine-tuned model.

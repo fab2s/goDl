@@ -7,8 +7,8 @@
 // Build graphs using the fluent API:
 //
 //	g, err := graph.From(encoder).
-//	    Through(relu).
-//	    Through(decoder).
+//	    Through(relu).Tag("hidden").
+//	    Through(decoder).Tag("loss").
 //	    Build()
 //
 //	result := g.Forward(input)  // Graph implements nn.Module
@@ -16,6 +16,13 @@
 // Nodes in the same topological level (no dependencies on each other)
 // execute concurrently via goroutines. This naturally parallelizes
 // Split branches without any special configuration.
+//
+// # Observation
+//
+// Tagged node outputs are captured during Forward and can be logged,
+// collected into batch buffers, flushed to epoch-level history, and
+// queried as trends. See [Graph.Log], [Graph.Collect], [Graph.Flush],
+// and [Graph.Trend] in observe.go for details.
 package graph
 
 import (
@@ -75,6 +82,18 @@ type Graph struct {
 	state     []*stateEntry      // forward-reference state buffers
 	tags      map[string]string  // tag name → node ID (for visualization)
 	frozen    map[string]bool    // frozen tag names (for parameter freezing)
+
+	// Observation — see observe.go.
+	// tagsByNode and taggedOutputs are initialized at Build time and
+	// populated automatically during Forward (zero runtime cost when
+	// no tags exist). The remaining fields are lazily initialized by
+	// the first Collect/OnLog/OnFlush call.
+	tagsByNode    map[string]string                   // node ID → tag name (reverse of tags)
+	taggedOutputs map[string]*autograd.Variable       // last Forward's tagged outputs
+	batchBuffer   map[string][]float64                // Collect accumulation (within epoch)
+	epochHistory  map[string][]float64                // epoch means (populated by Flush)
+	logFunc       func(map[string]*autograd.Variable) // Log hook
+	flushFunc     func(map[string]float64)            // Flush hook
 }
 
 // Forward executes the graph, routing variables along edges between nodes.
@@ -97,6 +116,11 @@ func (g *Graph) Forward(inputs ...*autograd.Variable) *autograd.Variable {
 		node := g.nodes[ep.nodeID]
 		idx := portIndex(node.inputPorts, ep.port)
 		slots[ep.nodeID][idx] = inputs[i]
+	}
+
+	// Clear tagged outputs from previous Forward.
+	for k := range g.taggedOutputs {
+		delete(g.taggedOutputs, k)
 	}
 
 	// Execute level by level. Within a level, nodes are independent.
@@ -154,6 +178,7 @@ func (g *Graph) executeLevel(
 		nodeOutputs[node.id] = results[i]
 		g.routeOutputs(node, results[i], slots)
 		g.captureState(node, results[i])
+		g.captureTagged(node, results[i])
 	}
 	return nil
 }
@@ -186,6 +211,7 @@ func (g *Graph) executeAndRoute(
 	nodeOutputs[node.id] = outs
 	g.routeOutputs(node, outs, slots)
 	g.captureState(node, outs)
+	g.captureTagged(node, outs)
 	return nil
 }
 
@@ -480,16 +506,24 @@ func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposed
 		edgesFrom[edge.fromNode] = append(edgesFrom[edge.fromNode], edge)
 	}
 
+	// Build reverse tag lookup for tagged output capture during Forward.
+	tagsByNode := make(map[string]string, len(tags))
+	for name, nodeID := range tags {
+		tagsByNode[nodeID] = name
+	}
+
 	return &Graph{
-		nodes:     nodes,
-		edges:     edges,
-		inputs:    inputs,
-		outputs:   outputs,
-		order:     order,
-		levels:    levels,
-		edgesFrom: edgesFrom,
-		state:     state,
-		tags:      tags,
+		nodes:         nodes,
+		edges:         edges,
+		inputs:        inputs,
+		outputs:       outputs,
+		order:         order,
+		levels:        levels,
+		edgesFrom:     edgesFrom,
+		state:         state,
+		tags:          tags,
+		tagsByNode:    tagsByNode,
+		taggedOutputs: make(map[string]*autograd.Variable, len(tags)),
 	}, nil
 }
 

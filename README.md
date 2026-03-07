@@ -75,8 +75,9 @@ Requirements: Docker (with NVIDIA Container Toolkit for GPU support).
 git clone https://github.com/fab2s/goDl.git
 cd goDl
 make image    # build dev container (Go + libtorch + CUDA)
-make test     # run all 276 tests (CPU + CUDA)
+make test     # run all 307 tests (CPU + CUDA)
 make test-cpu # run without GPU
+make doc      # local doc server (pkg.go.dev style)
 make shell    # interactive shell in container
 ```
 
@@ -161,6 +162,36 @@ runnable version with data generation and evaluation.
 | `nn.GradScaler` | Dynamic loss scaling for mixed precision (float16) training |
 | `nn.CastParameters` | Cast model parameters to any dtype (`Float16`, `BFloat16`, etc.) |
 
+### Observation & Trends
+
+Tags double as observation points — collect metrics during training, flush
+to epoch history, and query trends to drive training decisions:
+
+```go
+for epoch := range epochs {
+    for _, batch := range loader {
+        g.Forward(batch.Input)
+        g.Collect("loss")
+    }
+    g.Flush()
+
+    if g.Trend("loss").Stalled(5, 1e-4) {
+        scheduler.Decay()
+    }
+    if g.Trend("loss").Improving(3) {
+        g.Unfreeze("decoder")
+    }
+}
+```
+
+| Method | What it does |
+|--------|-------------|
+| `g.Tagged(tag)` | Access a tagged node's output after Forward |
+| `g.Log(tags...)` | Print current tagged values (hookable via `OnLog`) |
+| `g.Collect(tags...)` / `g.Flush(tags...)` | Batch → epoch metric collection |
+| `g.Trend(tag)` | Epoch-level trend: `Slope`, `Stalled`, `Improving`, `Converged` |
+| `g.Sub(tag)` | Reach into a sub-graph's metrics — no extra Forward needed |
+
 ### Visualization
 
 ```go
@@ -178,7 +209,7 @@ Every differentiable path is verified against finite-difference gradients:
 - 32 autograd op-level checks (every op + compositions)
 - 10 module-level checks (every NN module, input + parameter gradients)
 - 11 exact optimizer step verifications (SGD, Adam, AdamW)
-- 276 tests total, all passing with race detector
+- 307 tests total, all passing with race detector
 
 ## Why Go for Deep Learning?
 

@@ -6,7 +6,7 @@
 COMPOSE = docker compose
 RUN     = $(COMPOSE) run --rm dev
 
-.PHONY: build test test-cpu test-race lint lint-fix cover shell clean image env
+.PHONY: build test test-cpu test-race lint lint-fix cover doc shell clean image env
 
 # Build the Docker image
 image:
@@ -39,6 +39,11 @@ lint: image
 # Lint and auto-fix (gofmt + golangci-lint)
 lint-fix: image
 	$(RUN) sh -c 'gofmt -w . && golangci-lint run --fix ./...'
+
+# Documentation server (pkg.go.dev style) — open http://localhost:6060
+doc: image
+	@echo "Starting doc server at http://localhost:6060/github.com/fab2s/goDl"
+	$(COMPOSE) run --rm -p 127.0.0.1:6060:6060 dev pkgsite -http=0.0.0.0:6060 .
 
 # Test coverage report
 cover: image
