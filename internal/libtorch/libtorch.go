@@ -37,10 +37,12 @@ import (
 type DType int
 
 const (
-	Float32 DType = C.GODL_FLOAT32
-	Float64 DType = C.GODL_FLOAT64
-	Int32   DType = C.GODL_INT32
-	Int64   DType = C.GODL_INT64
+	Float16  DType = C.GODL_FLOAT16
+	BFloat16 DType = C.GODL_BFLOAT16
+	Float32  DType = C.GODL_FLOAT32
+	Float64  DType = C.GODL_FLOAT64
+	Int32    DType = C.GODL_INT32
+	Int64    DType = C.GODL_INT64
 )
 
 // Device represents where a tensor lives (CPU or CUDA).
@@ -220,12 +222,22 @@ func (t *Tensor) Numel() int64 {
 // --- Data access ---
 
 // Float32Data copies the tensor data into a Go float32 slice.
-// The tensor is moved to CPU if necessary.
+// The tensor is moved to CPU if necessary. If the tensor is not float32
+// (e.g. float16), it is cast to float32 first.
 func (t *Tensor) Float32Data() ([]float32, error) {
-	n := t.Numel()
+	src := t
+	if t.DType() != Float32 {
+		casted, err := ToDType(t, Float32)
+		if err != nil {
+			return nil, err
+		}
+		defer casted.Free()
+		src = casted
+	}
+	n := src.Numel()
 	buf := make([]float32, n)
 	cerr := C.godl_copy_data(
-		t.handle,
+		src.handle,
 		unsafe.Pointer(&buf[0]),
 		C.int64_t(n*4), // 4 bytes per float32
 	)
@@ -236,11 +248,21 @@ func (t *Tensor) Float32Data() ([]float32, error) {
 }
 
 // Float64Data copies the tensor data into a Go float64 slice.
+// If the tensor is not float64, it is cast first.
 func (t *Tensor) Float64Data() ([]float64, error) {
-	n := t.Numel()
+	src := t
+	if t.DType() != Float64 {
+		casted, err := ToDType(t, Float64)
+		if err != nil {
+			return nil, err
+		}
+		defer casted.Free()
+		src = casted
+	}
+	n := src.Numel()
 	buf := make([]float64, n)
 	cerr := C.godl_copy_data(
-		t.handle,
+		src.handle,
 		unsafe.Pointer(&buf[0]),
 		C.int64_t(n*8), // 8 bytes per float64
 	)
@@ -655,6 +677,28 @@ func Conv2dBackward(gradOutput, input, weight *Tensor, stride, padding, dilation
 		gradBias = &Tensor{handle: gbHandle}
 	}
 	return gradInput, gradWeight, gradBias, nil
+}
+
+// --- Dtype casting ---
+
+// ToDType casts a tensor to a different element type. Returns a new tensor.
+func ToDType(t *Tensor, dtype DType) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_to_dtype(t.handle, C.int(dtype), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// AllFinite returns true if all elements of the tensor are finite (no inf, no nan).
+func AllFinite(t *Tensor) (bool, error) {
+	var result C.int
+	cerr := C.godl_all_finite(t.handle, &result)
+	if err := checkErr(cerr); err != nil {
+		return false, err
+	}
+	return result != 0, nil
 }
 
 // --- Device operations ---

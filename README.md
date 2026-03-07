@@ -75,7 +75,7 @@ Requirements: Docker (with NVIDIA Container Toolkit for GPU support).
 git clone https://github.com/fab2s/goDl.git
 cd goDl
 make image    # build dev container (Go + libtorch + CUDA)
-make test     # run all 259 tests (CPU + CUDA)
+make test     # run all 276 tests (CPU + CUDA)
 make test-cpu # run without GPU
 make shell    # interactive shell in container
 ```
@@ -126,6 +126,8 @@ runnable version with data generation and evaluation.
 | **Activations** | `ReLU`, `Sigmoid`, `Tanh`, `GELU`, `SiLU`, `Softmax` |
 | **Losses** | `MSELoss`, `CrossEntropyLoss` |
 | **Optimizers** | `SGD` (with momentum), `Adam`, `AdamW` |
+| **LR Scheduling** | `StepDecay`, `Cosine`, `Warmup` (composable), `ReduceOnPlateau` |
+| **Mixed Precision** | `Float16`/`BFloat16` dtype casting, `GradScaler` for loss scaling |
 
 ### Graph Builder
 
@@ -155,6 +157,9 @@ runnable version with data generation and evaluation.
 | `nn.SaveParameters` / `nn.LoadParameters` | Binary checkpoint format |
 | `KaimingUniform/Normal`, `XavierUniform/Normal` | Weight initialization |
 | `data.Loader` | Batched data loading with parallel prefetch and shuffle |
+| LR schedulers | `StepDecay`, `Cosine`, `Warmup`, `ReduceOnPlateau` (composable) |
+| `nn.GradScaler` | Dynamic loss scaling for mixed precision (float16) training |
+| `nn.CastParameters` | Cast model parameters to any dtype (`Float16`, `BFloat16`, etc.) |
 
 ### Visualization
 
@@ -173,7 +178,7 @@ Every differentiable path is verified against finite-difference gradients:
 - 32 autograd op-level checks (every op + compositions)
 - 10 module-level checks (every NN module, input + parameter gradients)
 - 11 exact optimizer step verifications (SGD, Adam, AdamW)
-- 259 tests total, all passing with race detector
+- 276 tests total, all passing with race detector
 
 ## Why Go for Deep Learning?
 

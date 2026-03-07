@@ -25,22 +25,26 @@ static char* make_error(const std::string& msg) {
 // Helper: convert our dtype constant to torch::ScalarType.
 static torch::ScalarType to_scalar_type(int dtype) {
     switch (dtype) {
-        case GODL_FLOAT32: return torch::kFloat32;
-        case GODL_FLOAT64: return torch::kFloat64;
-        case GODL_INT32:   return torch::kInt32;
-        case GODL_INT64:   return torch::kInt64;
-        default:           return torch::kFloat32;
+        case GODL_FLOAT16:  return torch::kFloat16;
+        case GODL_BFLOAT16: return torch::kBFloat16;
+        case GODL_FLOAT32:  return torch::kFloat32;
+        case GODL_FLOAT64:  return torch::kFloat64;
+        case GODL_INT32:    return torch::kInt32;
+        case GODL_INT64:    return torch::kInt64;
+        default:            return torch::kFloat32;
     }
 }
 
 // Helper: convert our dtype constant back from torch::ScalarType.
 static int from_scalar_type(torch::ScalarType st) {
     switch (st) {
-        case torch::kFloat32: return GODL_FLOAT32;
-        case torch::kFloat64: return GODL_FLOAT64;
-        case torch::kInt32:   return GODL_INT32;
-        case torch::kInt64:   return GODL_INT64;
-        default:              return GODL_FLOAT32;
+        case torch::kFloat16:  return GODL_FLOAT16;
+        case torch::kBFloat16: return GODL_BFLOAT16;
+        case torch::kFloat32:  return GODL_FLOAT32;
+        case torch::kFloat64:  return GODL_FLOAT64;
+        case torch::kInt32:    return GODL_INT32;
+        case torch::kInt64:    return GODL_INT64;
+        default:               return GODL_FLOAT32;
     }
 }
 
@@ -580,6 +584,27 @@ extern "C" char* godl_conv2d_backward(TorchTensor grad_output, TorchTensor input
         if (compute_bias) {
             *grad_bias = wrap(std::get<2>(result));
         }
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+// --- Dtype casting ---
+
+extern "C" char* godl_to_dtype(TorchTensor t, int dtype, TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t).to(to_scalar_type(dtype)));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_all_finite(TorchTensor t, int* result) {
+    try {
+        auto& tensor = unwrap(t);
+        *result = torch::isfinite(tensor).all().item<bool>() ? 1 : 0;
         return nullptr;
     } catch (const std::exception& e) {
         return make_error(e.what());

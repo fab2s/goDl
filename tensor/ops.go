@@ -498,6 +498,51 @@ func Stack(tensors []*Tensor, dim int) *Tensor {
 	return result
 }
 
+// --- Dtype casting ---
+
+// ToDType casts the tensor to a different element type. Returns a new tensor.
+// No-op if the tensor is already the target dtype.
+func (t *Tensor) ToDType(dtype DType) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	if t.DType() == dtype {
+		return t
+	}
+	raw, err := libtorch.ToDType(t.raw, dtype.toLibtorch())
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// Half casts the tensor to float16. Shorthand for ToDType(Float16).
+func (t *Tensor) Half() *Tensor {
+	return t.ToDType(Float16)
+}
+
+// BFloat16 casts the tensor to bfloat16. Shorthand for ToDType(BFloat16).
+func (t *Tensor) ToBFloat16() *Tensor {
+	return t.ToDType(BFloat16)
+}
+
+// Float casts the tensor to float32. Shorthand for ToDType(Float32).
+func (t *Tensor) Float() *Tensor {
+	return t.ToDType(Float32)
+}
+
+// AllFinite returns true if all elements are finite (no inf, no nan).
+func (t *Tensor) AllFinite() bool {
+	if !t.valid() {
+		return false
+	}
+	ok, err := libtorch.AllFinite(t.raw)
+	if err != nil {
+		return false
+	}
+	return ok
+}
+
 // --- Device operations ---
 
 // ToDevice moves the tensor to the specified device. Returns a new tensor.

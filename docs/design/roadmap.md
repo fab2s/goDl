@@ -276,7 +276,7 @@ outer, _ := From(inner).Through(l2).Build()  // inner graph is a node
 - **RefValidator**: build-time validation of Using ref contracts.
 - **Graph primitives**: `StateAdd`, `SoftmaxRouter`, `SigmoidRouter`, `Reshape`.
 - **Documentation**: 8 progressive tutorials, design docs, complete examples.
-- **Test coverage**: 259 tests including numerical gradient checks (autograd ops,
+- **Test coverage**: 276 tests including numerical gradient checks (autograd ops,
   all NN modules, exact optimizer step verification), all passing with race detector.
 
 ### Remaining
@@ -286,21 +286,24 @@ outer, _ := From(inner).Through(l2).Build()  // inner graph is a node
 
 ---
 
-## Phase 5: Training Refinements
+## Phase 5: Training Refinements ✅
 
-### LR Scheduling
+### LR Scheduling ✅
 
-Interface wrapping optimizer, adjusts lr per step/epoch.
-Schedules: warmup, step decay, cosine decay, reduce-on-plateau.
-Self-contained in `nn/` — no stack-wide changes.
+`Scheduler` interface wrapping `LRAdjustable` optimizer. Four schedules:
+`StepDecayScheduler` (staircase), `CosineScheduler` (cosine annealing),
+`WarmupScheduler` (linear warmup composable with any inner scheduler),
+`PlateauScheduler` (reduce on plateau via `Observe(metric)`).
+Self-contained in `nn/scheduler.go`.
 
-### Mixed Precision
+### Mixed Precision ✅
 
-Float16 forward/backward + float32 parameter updates. Three pieces:
-autocast (dtype per op), loss scaling (prevent underflow), master weights
-(float32 copies for optimizer). Requires `tensor.Half()`/`tensor.Float()`
-casting, dtype plumbing through shim. Moderate effort, touches every layer
-but no architectural changes.
+Full dtype casting pipeline: `Float16`, `BFloat16` support added to
+every layer (shim → libtorch → tensor). Tensor methods: `Half()`,
+`ToBFloat16()`, `Float()`, `ToDType()`, `AllFinite()`. Training
+utilities: `GradScaler` (dynamic loss scaling with growth/backoff),
+`CastParameters()`. `Float32Data()`/`Float64Data()` auto-cast from
+any dtype for safe data access and checkpointing.
 
 ---
 

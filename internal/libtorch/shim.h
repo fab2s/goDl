@@ -149,11 +149,21 @@ int godl_cuda_is_available(void);
 // Get number of CUDA devices.
 int godl_cuda_device_count(void);
 
+// --- Dtype casting ---
+
+// Cast tensor to a different dtype. Returns a new tensor.
+char* godl_to_dtype(TorchTensor t, int dtype, TorchTensor* result);
+
+// Check if all elements are finite (no inf, no nan). Sets result to 1 if all finite.
+char* godl_all_finite(TorchTensor t, int* result);
+
 // --- DType constants (matching torch::kFloat32, etc.) ---
-#define GODL_FLOAT32 6
-#define GODL_FLOAT64 7
-#define GODL_INT32   3
-#define GODL_INT64   4
+#define GODL_FLOAT16  5
+#define GODL_BFLOAT16 15
+#define GODL_FLOAT32  6
+#define GODL_FLOAT64  7
+#define GODL_INT32    3
+#define GODL_INT64    4
 
 // --- Device constants ---
 #define GODL_CPU  0

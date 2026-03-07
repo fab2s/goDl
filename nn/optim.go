@@ -10,6 +10,15 @@ type Optimizer interface {
 	ZeroGrad() // reset all gradients
 }
 
+// LRAdjustable is implemented by optimizers whose learning rate can be
+// changed at runtime. All built-in optimizers implement this interface.
+// LR schedulers use it to adjust the rate between steps.
+type LRAdjustable interface {
+	Optimizer
+	LR() float64
+	SetLR(lr float64)
+}
+
 // --- SGD ---
 
 // SGD implements stochastic gradient descent with optional momentum.
@@ -66,6 +75,12 @@ func (o *SGD) Step() {
 		}
 	}
 }
+
+// LR returns the current learning rate.
+func (o *SGD) LR() float64 { return o.lr }
+
+// SetLR changes the learning rate.
+func (o *SGD) SetLR(lr float64) { o.lr = lr }
 
 // ZeroGrad resets all parameter gradients.
 func (o *SGD) ZeroGrad() {
@@ -153,6 +168,12 @@ func (a *Adam) adamUpdate(i int, p *Parameter, grad *tensor.Tensor, weightDecay 
 	p.SetData(newData)
 }
 
+// LR returns the current learning rate.
+func (a *Adam) LR() float64 { return a.lr }
+
+// SetLR changes the learning rate.
+func (a *Adam) SetLR(lr float64) { a.lr = lr }
+
 // ZeroGrad resets all parameter gradients.
 func (a *Adam) ZeroGrad() {
 	for _, p := range a.params {
@@ -200,6 +221,12 @@ func (w *AdamW) Step() {
 		w.adam.adamUpdate(i, p, grad, w.weightDecay)
 	}
 }
+
+// LR returns the current learning rate.
+func (w *AdamW) LR() float64 { return w.adam.lr }
+
+// SetLR changes the learning rate.
+func (w *AdamW) SetLR(lr float64) { w.adam.lr = lr }
 
 // ZeroGrad resets all parameter gradients.
 func (w *AdamW) ZeroGrad() {
