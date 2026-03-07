@@ -2,92 +2,231 @@
   <img src="docs/goDl.png" alt="goDl" width="320">
 </p>
 
-# goDl
+<h1 align="center">goDl</h1>
 
-A Go-native deep learning framework built from first principles on top of
-libtorch.
+<p align="center">
+A Go-native deep learning framework built on libtorch.<br>
+Same GPU kernels as PyTorch. No Python. No GIL. Just Go.
+</p>
 
-goDl wraps libtorch's optimized C++/CUDA kernels with a Go-native tensor API,
-autograd engine, and computation graph — eliminating Python's dispatch overhead
-and GIL limitations while keeping the same battle-tested GPU math under the
-hood.
+<p align="center">
+  <a href="#the-graph-builder">Graph Builder</a> &bull;
+  <a href="#quick-start">Quick Start</a> &bull;
+  <a href="#features">Features</a> &bull;
+  <a href="docs/tutorials/01-tensors.md">Tutorials</a> &bull;
+  <a href="#architecture">Architecture</a>
+</p>
 
-The focus is on architectures that Python punishes: recurrent attention,
-adaptive computation, hypothesis-test loops — anything with many small
-sequential operations, branching control flow, or independent parallel paths.
+---
 
-## Why Go
+## The Graph Builder
 
-### Why not just use Python/PyTorch?
+goDl's fluent graph builder lets you describe complex architectures as
+readable data flow — no boilerplate, no graph construction commands.
 
-Python adds ~3-5 μs of framework overhead to every GPU operation (interpreter,
+```go
+model, _ := graph.From(nn.MustLinear(2, 16)).     // input projection
+    Through(nn.NewGELU()).                          // activation
+    Through(nn.MustLayerNorm(16)).                  // normalization
+    Also(nn.MustLinear(16, 16)).                    // residual connection
+    Through(nn.MustLinear(16, 2)).                  // output projection
+    Build()
+```
+
+That's a trainable model. `Also` adds the residual — input flows through the
+Linear *and* gets added to its output. `Build()` returns a `graph.Graph` that
+implements `nn.Module` — you can nest it inside other graphs.
+
+Things get interesting when architectures get complex:
+
+```go
+g, _ := graph.From(encoder).Tag("encoded").                 // tag for later
+    Split(headA, headB, headC).Merge(graph.Mean()).          // multi-head + merge
+    Loop(refinementBlock).For(3).Tag("refined").             // iterate 3 times
+    Gate(router, expertA, expertB).Using("encoded").         // soft routing with context
+    Switch(selector, lightPath, heavyPath).Using("refined"). // hard routing
+    Through(graph.StateAdd()).Using("memory").Tag("memory").  // recurrent state
+    Loop(decoder).While(haltCondition, 10).                  // adaptive computation
+    Through(outputHead).
+    Build()
+```
+
+Every construct — `Split/Merge`, `Also`, `Loop`, `Gate`, `Switch`, `Map`,
+`Tag/Using` — composes cleanly. Sub-graphs nest like any module. Forward
+references (`Using` before `Tag`) carry state across calls, enabling recurrent
+architectures without special-casing.
+
+The graph executes nodes at the same topological level in parallel via
+goroutines — independent branches run concurrently without any extra code.
+
+See the **[Graph Builder Tutorial](docs/tutorials/05-graph-builder.md)** and
+the [full showcase](examples/showcase/showcase.go) that exercises every builder
+method.
+
+## Quick Start
+
+Requirements: Docker (with NVIDIA Container Toolkit for GPU support).
+
+```bash
+git clone https://github.com/fab2s/goDl.git
+cd goDl
+make image    # build dev container (Go + libtorch + CUDA)
+make test     # run all 259 tests (CPU + CUDA)
+make test-cpu # run without GPU
+make shell    # interactive shell in container
+```
+
+### Train a model in 30 lines
+
+```go
+// Task: learn cumulative sum — [a, b] → [a, a+b]
+
+// Build the model.
+model, _ := graph.From(nn.MustLinear(2, 16)).
+    Through(nn.NewGELU()).
+    Through(nn.MustLayerNorm(16)).
+    Also(nn.MustLinear(16, 16)).
+    Through(nn.MustLinear(16, 2)).
+    Build()
+
+// Set up training.
+optimizer := nn.NewAdam(model.Parameters(), 0.01)
+model.SetTraining(true)
+
+// Training loop.
+for loader.Next() {
+    input, target := loader.Batch()
+
+    pred := model.Forward(autograd.NewVariable(input, true))
+    loss := nn.MSELoss(pred, autograd.NewVariable(target, false))
+
+    optimizer.ZeroGrad()
+    loss.Backward()
+    nn.ClipGradNorm(model.Parameters(), 1.0)
+    optimizer.Step()
+}
+```
+
+See [`examples/train/`](examples/train/train_test.go) for the complete
+runnable version with data generation and evaluation.
+
+## Features
+
+### Core Stack
+
+| Layer | What it does |
+|-------|-------------|
+| **Tensor** | Immutable, chainable API with error propagation. CPU and CUDA. |
+| **Autograd** | Reverse-mode automatic differentiation. Full backward for every op. |
+| **NN Modules** | `Linear`, `Conv2d`, `LayerNorm`, `BatchNorm`, `Dropout`, `Embedding`, `GRUCell`, `LSTMCell` |
+| **Activations** | `ReLU`, `Sigmoid`, `Tanh`, `GELU`, `SiLU`, `Softmax` |
+| **Losses** | `MSELoss`, `CrossEntropyLoss` |
+| **Optimizers** | `SGD` (with momentum), `Adam`, `AdamW` |
+
+### Graph Builder
+
+| Method | What it does |
+|--------|-------------|
+| `From(m).Through(m)` | Linear chain |
+| `Split(m...).Merge(op)` | Parallel branches, merged by `Add()`, `Mean()`, or `Cat(dim)` |
+| `Also(m)` | Residual connection: `input + m(input)` |
+| `Tag(name)` / `Using(refs...)` | Named references — backward (same pass) or forward (across calls) |
+| `Loop(body).For(n)` | Fixed iteration with BPTT |
+| `Loop(body).While(cond, max)` | Condition before body (0..max iterations) |
+| `Loop(body).Until(cond, max)` | Condition after body (1..max iterations) |
+| `Gate(router, experts...)` | Soft routing — all experts execute, weighted combination |
+| `Switch(selector, branches...)` | Hard routing — only selected branch executes |
+| `Map(body).Each()` | Apply body to each element along dim 0 |
+| `Map(body).Over(tag)` | Iterate over a tagged tensor |
+| `Map(body).Slices(n)` | Decompose last dim into n slices, map, recompose |
+| `.Batched()` | Fast path for Map — full batch in one call |
+
+### Training Tools
+
+| Tool | What it does |
+|------|-------------|
+| `nn.ClipGradNorm` | L2 norm gradient clipping |
+| `nn.ClipGradValue` | Element-wise gradient clamping |
+| `g.Freeze(tags...)` / `g.Unfreeze(tags...)` | Freeze parameters by tag name |
+| `nn.SaveParameters` / `nn.LoadParameters` | Binary checkpoint format |
+| `KaimingUniform/Normal`, `XavierUniform/Normal` | Weight initialization |
+| `data.Loader` | Batched data loading with parallel prefetch and shuffle |
+
+### Visualization
+
+```go
+fmt.Println(g.DOT())          // Graphviz DOT with parameter counts
+svg, _ := g.SVG("model.svg")  // render to SVG
+```
+
+Node shapes indicate type (input, output, loop, map, switch, activation,
+normalization). Parameter counts appear on each node. Forward-ref state
+loops are shown as dotted edges.
+
+### Numerical Verification
+
+Every differentiable path is verified against finite-difference gradients:
+- 32 autograd op-level checks (every op + compositions)
+- 10 module-level checks (every NN module, input + parameter gradients)
+- 11 exact optimizer step verifications (SGD, Adam, AdamW)
+- 259 tests total, all passing with race detector
+
+## Why Go for Deep Learning?
+
+### The dispatch overhead problem
+
+Python adds ~3-5 us of framework overhead to every GPU operation (interpreter,
 GIL, argument parsing, dispatch chain). For large operations like a 1024x1024
 matmul, this is noise. For architectures built on many small sequential
 operations — recurrent steps, iterative refinement, multi-head attention with
 independent heads — this overhead dominates. The GPU starves between kernel
 launches.
 
-Worse, Python's Global Interpreter Lock prevents parallel kernel dispatch.
-Independent model branches (e.g., 8 attention heads) must dispatch kernels
-sequentially from a single thread, even when the GPU has dozens of idle
-Streaming Multiprocessors.
+Python's Global Interpreter Lock prevents parallel kernel dispatch. Independent
+model branches must dispatch kernels sequentially from a single thread, even
+when the GPU has dozens of idle Streaming Multiprocessors.
 
-torch.compile partially addresses this by tracing and fusing operations, but
+`torch.compile` partially addresses this by tracing and fusing operations, but
 it breaks on data-dependent control flow and requires recompilation when loop
 counts or branch structure change — exactly the dynamic architectures that
 need help most.
 
-See [docs/design/cuda-dispatch.md](docs/design/cuda-dispatch.md) for the full analysis.
+### Why Go and not C++ or Rust?
 
-### Why not C++?
-
-C++ would have the least overhead, but writing and iterating on model
-architectures in C++ is slow and error-prone. The goal is a framework that
-researchers can productively experiment with, not a systems programming
-exercise. Go provides compiled-language performance with a much shorter
+**Not C++** because writing and iterating on model architectures in C++ is slow
+and error-prone. Go provides compiled-language performance with a much shorter
 feedback loop: fast compilation, simple tooling, readable code.
 
-### Why not Rust?
-
-Rust's main advantage — compile-time memory safety via the borrow checker — is
-less relevant here. Tensor memory lives in libtorch's C allocator; the borrow
-checker cannot reason about it. Both Go and Rust need the same kind of
-scope-based or explicit lifecycle management at the FFI boundary.
-
-Meanwhile, Go has concrete advantages for this domain:
-
-- **Goroutines** are simpler than Rust's async model for parallel kernel
-  dispatch across CUDA streams. `go func()` vs futures, pinning, Send/Sync
-  bounds, and executor selection.
-- **Compilation speed.** Go compiles in seconds; Rust in minutes. When
-  iterating on model architectures, this compounds.
-- **Readability.** DL researchers are not systems programmers. Go reads close
-  to pseudocode. Rust's ownership model, lifetimes, and trait system are a
-  steep barrier for a community that learned Python reluctantly.
-- **Tooling simplicity.** `go test`, `go build`, `go vet` — no feature flags,
-  no proc macro debugging, no async runtime choices.
+**Not Rust** because Rust's main advantage — the borrow checker — cannot reason
+about tensor memory in libtorch's C allocator. Meanwhile Go has concrete
+advantages: goroutines are simpler than async for parallel dispatch, compilation
+is seconds not minutes, the code reads close to pseudocode, and the tooling
+(`go test`, `go build`, `go vet`) just works.
 
 A framework nobody uses solves nothing. Go hits the right trade-off between
-performance and accessibility for the DL research community.
+performance and accessibility for this domain.
+
+See [docs/design/cuda-dispatch.md](docs/design/cuda-dispatch.md) for the full
+dispatch overhead analysis.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  User Code / Model Definitions                          │
-├─────────────────────────────────────────────────────────┤
-│  Graph Engine (composition, branching, loops, parallel)  │
-├─────────────────────────────────────────────────────────┤
-│  Layers & Optimizers (Linear, Conv, GRU, Adam, SGD)     │
-├─────────────────────────────────────────────────────────┤
-│  Autograd Engine (Go-native, reverse-mode AD)           │
-├─────────────────────────────────────────────────────────┤
-│  Tensor API (Go-idiomatic wrapper)                      │
-├─────────────────────────────────────────────────────────┤
-│  libtorch C Bindings (CGo)                              │
-├─────────────────────────────────────────────────────────┤
-│  libtorch / CUDA                                        │
-└─────────────────────────────────────────────────────────┘
++-----------------------------------------------------------+
+|  User Code / Model Definitions                            |
++-----------------------------------------------------------+
+|  graph/    Fluent builder, parallel execution, DOT/SVG    |
++-----------------------------------------------------------+
+|  nn/       Modules, losses, optimizers, checkpoints       |
++-----------------------------------------------------------+
+|  autograd/ Reverse-mode AD, gradient tracking             |
++-----------------------------------------------------------+
+|  tensor/   Immutable chainable API, CPU + CUDA            |
++-----------------------------------------------------------+
+|  internal/libtorch/   CGo bindings to libtorch C++        |
++-----------------------------------------------------------+
+|  libtorch / CUDA / ROCm / MPS / CPU                      |
++-----------------------------------------------------------+
 ```
 
 The same GPU kernels that power PyTorch run the actual math. goDl replaces
@@ -98,39 +237,32 @@ Since goDl binds libtorch — not CUDA directly — it inherits libtorch's backe
 support: NVIDIA (CUDA), AMD (ROCm), Intel (XPU), Apple Silicon (MPS), and
 CPU. Switching hardware is a build flag, not a code change.
 
-## Getting Started
-
-Requirements: Docker with NVIDIA Container Toolkit (for GPU support).
-
-```bash
-make image   # build the dev container (Go + libtorch + CUDA)
-make test    # run all tests
-make shell   # interactive shell in the container
-```
-
-See the [Makefile](Makefile) for all available commands.
-
-## Status
-
-Early development. See [docs/design/roadmap.md](docs/design/roadmap.md) for the full plan.
-
-Currently developed and tested on a GTX 1060 6GB (Pascal, SM 6.1) — the
-minimum NVIDIA GPU that supports CUDA compute capability 6.x. If this runs
-well on a 1060, it will fly on anything modern. That said, testing on more
-capable hardware would accelerate development significantly. 
-
-If anyone feels like donating a modern GPU to the cause, the latent space would be eternally grateful.
-
 ## Documentation
 
-### Design
-- [Roadmap](docs/design/roadmap.md) — phased development plan with interface sketches
-- [CUDA Dispatch Analysis](docs/design/cuda-dispatch.md) — detailed overhead breakdown and performance thesis
-- [Trajectory Thesis](docs/design/trajectory-thesis.md) — the geometric intuition behind the project
+### Tutorials
 
-### Origin
-- [Bootstrap](docs/origin/bootstrap.md) — research context and motivation
+Step-by-step guides from basics to advanced, each with runnable examples:
+
+1. **[Tensors](docs/tutorials/01-tensors.md)** — creation, ops, chaining, error handling
+2. **[Autograd](docs/tutorials/02-autograd.md)** — variables, gradients, backward pass
+3. **[Modules](docs/tutorials/03-modules.md)** — Linear, Conv2d, normalization, RNN cells
+4. **[Training](docs/tutorials/04-training.md)** — losses, optimizers, data loading, full loop
+5. **[Graph Builder](docs/tutorials/05-graph-builder.md)** — the fluent API from simple to complex
+6. **[Advanced Graphs](docs/tutorials/06-advanced-graphs.md)** — forward refs, loops, gates, switches
+7. **[Visualization](docs/tutorials/07-visualization.md)** — DOT/SVG output, reading diagrams
+8. **[Utilities](docs/tutorials/08-utilities.md)** — checkpoints, clipping, freezing, initialization
+
+### Design
+
+- [Roadmap](docs/design/roadmap.md) — phased development plan
+- [CUDA Dispatch Analysis](docs/design/cuda-dispatch.md) — overhead breakdown and performance thesis
+- [Trajectory Thesis](docs/design/trajectory-thesis.md) — geometric intuition behind the project
+
+### Examples
+
+- [`examples/train/`](examples/train/) — complete training loop (data loading, loss, backward, optimizer)
+- [`examples/showcase/`](examples/showcase/) — every graph builder method in one graph
 
 ## License
 
-MIT
+goDl is open-sourced software licensed under the [MIT license](./LICENSE).

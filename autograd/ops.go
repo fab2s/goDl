@@ -397,8 +397,18 @@ func (v *Variable) SumDim(dim int, keepdim bool) *Variable {
 			name:   "SumDimBackward",
 			inputs: []*Variable{v},
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				g := grad
+				if !keepdim {
+					// Restore the reduced dimension for broadcasting.
+					gradShape := g.Shape()
+					newShape := make([]int64, len(gradShape)+1)
+					copy(newShape[:dim], gradShape[:dim])
+					newShape[dim] = 1
+					copy(newShape[dim+1:], gradShape[dim:])
+					g = g.Reshape(newShape)
+				}
 				ones := inputData.OnesLike()
-				return []*tensor.Tensor{ones.Mul(grad)}
+				return []*tensor.Tensor{ones.Mul(g)}
 			},
 		}
 	}
