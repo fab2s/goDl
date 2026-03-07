@@ -484,39 +484,43 @@ func (s *AttentionStep) ForwardNamed(h *autograd.Variable, refs map[string]*auto
 func (s *AttentionStep) RefNames() []string { return []string{"image"} }
 ```
 
-The graph reads like the architecture diagram:
+The graph reads like the architecture diagram. The decoder lives
+inside the graph too — it receives `latent` and `case` via Using refs.
+`Input("case")` adds the case label as a second graph-level input:
 
 ```go
 g, _ := graph.From(&Identity{}).Tag("image").
+    Input("case").                                                // second input
     Through(NewH0Init(hiddenDim)).
     Loop(step).For(nGlimpses).Using("image").Tag("attention").
     Through(latentHead).Tag("latent").
     Split(letterHead, caseHead).TagGroup("heads").
     Merge(&SelectFirst{}).
+    Through(decoder).Using("latent", "case").Tag("recon").        // decoder in graph
     Build()
 ```
 
-The model struct only holds the graph — no module references needed:
+The model struct is just a graph — no module references:
 
 ```go
 type Model struct {
-    Graph   *graph.Graph
-    Decoder *Decoder
+    Graph *graph.Graph
 }
 
 func (m *Model) Forward(img, caseLabel *autograd.Variable) *Result {
-    m.Graph.Forward(img)  // auto-resets, auto-traces
+    m.Graph.Forward(img, caseLabel)  // auto-resets, auto-traces
     return &Result{
         Logits:    m.Graph.Tagged("heads_0"),
         Latent:    m.Graph.Tagged("latent"),
         Locations: m.Graph.Traces("attention"),  // [initial, step1, ..., stepN]
-        Recon:     m.Decoder.Forward(m.Graph.Tagged("latent").Cat(caseLabel, 1)),
+        Recon:     m.Graph.Tagged("recon"),
     }
 }
 ```
 
-No manual `Reset` call. No `Step` field leaking internals. The graph
-owns the lifecycle.
+No manual `Reset` call. No module fields leaking internals. The graph
+owns the entire lifecycle — parameters, training mode, visualization,
+observation — for every component.
 
 ## Putting it together
 
@@ -569,6 +573,7 @@ output := model.Forward(testInput)
 
 | Construct | Builder call | Behavior |
 |-----------|-------------|----------|
+| Auxiliary input | `Input("name")` | Named entry point, consumed via Using |
 | Backward ref | `Tag("x")` ... `Using("x")` | Direct wire, same pass |
 | Forward ref | `Using("x")` ... `Tag("x")` | State buffer, cross-pass |
 | Fixed loop | `Loop(body).For(n)` | Exactly n iterations |

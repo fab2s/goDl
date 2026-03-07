@@ -938,6 +938,156 @@ func TestSplitUsing(t *testing.T) {
 	t.Logf("Split+Using (all branches get ctx): %v", vals)
 }
 
+// --- Input tests ---
+
+func TestInputForward(t *testing.T) {
+	// Two-input graph: primary stream adds auxiliary input via Using.
+	// From(identity).Tag("main") → Input("aux") → Through(Add).Using("aux")
+	// Forward(main, aux) = main + aux
+
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0}) // identity
+
+	g, err := From(entry).Tag("main").
+		Input("aux").
+		Through(Add()).Using("aux").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mainT, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	auxT, _ := tensor.FromFloat32([]float32{10, 20}, []int64{1, 2})
+	result := g.Forward(
+		autograd.NewVariable(mainT, false),
+		autograd.NewVariable(auxT, false),
+	)
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	vals := allF32(result)
+	if !approxEqual(vals[0], 11.0, 1e-6) || !approxEqual(vals[1], 22.0, 1e-6) {
+		t.Errorf("Input forward: got %v, want [11, 22]", vals)
+	}
+	t.Logf("Input (two-input graph): %v", vals)
+}
+
+func TestInputBackward(t *testing.T) {
+	// Gradients flow through both inputs.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{2, 0, 0, 2}, []float32{0, 0}) // 2x
+
+	g, err := From(entry).Tag("main").
+		Input("aux").
+		Through(Add()).Using("aux").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mainT, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	auxT, _ := tensor.FromFloat32([]float32{10, 20}, []int64{1, 2})
+	mainVar := autograd.NewVariable(mainT, true)
+	auxVar := autograd.NewVariable(auxT, true)
+
+	result := g.Forward(mainVar, auxVar)
+	loss := result.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	// result = 2*main + aux, sum = 2*m1 + 2*m2 + a1 + a2
+	// d/d(main) = [2, 2], d/d(aux) = [1, 1]
+	mainGrad := gradF32(mainVar)
+	if !approxEqual(mainGrad[0], 2.0, 1e-5) || !approxEqual(mainGrad[1], 2.0, 1e-5) {
+		t.Errorf("main grad: got %v, want [2, 2]", mainGrad)
+	}
+	auxGrad := gradF32(auxVar)
+	if !approxEqual(auxGrad[0], 1.0, 1e-5) || !approxEqual(auxGrad[1], 1.0, 1e-5) {
+		t.Errorf("aux grad: got %v, want [1, 1]", auxGrad)
+	}
+	t.Logf("Input backward: main grad=%v, aux grad=%v", mainGrad, auxGrad)
+}
+
+func TestInputMultiple(t *testing.T) {
+	// Three inputs: main + two auxiliary.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	g, err := From(entry).Tag("main").
+		Input("a", "b").
+		Through(Add()).Using("a").
+		Through(Add()).Using("b").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mainT, _ := tensor.FromFloat32([]float32{1, 1}, []int64{1, 2})
+	aT, _ := tensor.FromFloat32([]float32{10, 10}, []int64{1, 2})
+	bT, _ := tensor.FromFloat32([]float32{100, 100}, []int64{1, 2})
+	result := g.Forward(
+		autograd.NewVariable(mainT, false),
+		autograd.NewVariable(aT, false),
+		autograd.NewVariable(bT, false),
+	)
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	vals := allF32(result)
+	// main + a + b = [111, 111]
+	if !approxEqual(vals[0], 111.0, 1e-5) || !approxEqual(vals[1], 111.0, 1e-5) {
+		t.Errorf("Multi-input: got %v, want [111, 111]", vals)
+	}
+	t.Logf("Input (three inputs): %v", vals)
+}
+
+func TestInputDuplicateTag(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 2)
+	_, err := From(entry).Tag("x").Input("x").Build()
+	if err == nil {
+		t.Error("expected error for duplicate tag on Input")
+	}
+	t.Logf("Error: %v", err)
+}
+
+func TestInputDOT(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 2)
+	g, err := From(entry).Tag("main").
+		Input("case").
+		Through(Add()).Using("case").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dot := g.DOT()
+	if !strings.Contains(dot, "case") {
+		t.Error("DOT should contain input name 'case'")
+	}
+	t.Logf("DOT:\n%s", dot)
+}
+
+func TestInputWrongCount(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 2)
+	g, err := From(entry).Tag("main").
+		Input("aux").
+		Through(Add()).Using("aux").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Only one input when two expected.
+	mainT, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(mainT, false))
+	if result.Err() == nil {
+		t.Error("expected error for wrong input count")
+	}
+}
+
 // --- Gate tests ---
 
 func TestGateForwardEqual(t *testing.T) {

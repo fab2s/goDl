@@ -135,6 +135,7 @@ runnable version with data generation and evaluation.
 | Method | What it does |
 |--------|-------------|
 | `From(m).Through(m)` | Linear chain |
+| `Input(names...)` | Auxiliary graph inputs, accessible via `Using(name)` — multi-input graphs |
 | `Split(m...).Merge(op)` | Parallel branches, merged by `Add()`, `Mean()`, or `Cat(dim)` |
 | `Also(m)` | Residual connection: `input + m(input)` |
 | `Tag(name)` / `Using(refs...)` | Named references — backward (same pass) or forward (across calls) |

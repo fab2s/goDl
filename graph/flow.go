@@ -84,6 +84,59 @@ func From(m nn.Module) *FlowBuilder {
 	return fb
 }
 
+// Input adds named auxiliary inputs to the graph. Each name creates a
+// passthrough node, tags it, and exposes it as a graph-level input.
+// The main flow continues unchanged — downstream nodes consume
+// inputs via [FlowBuilder.Using].
+//
+// Forward receives inputs in declaration order: the From entry first,
+// then each Input name in the order they appear.
+//
+//	g, _ := graph.From(encoder).Tag("image").
+//	    Input("case", "context").
+//	    Through(decoder).Using("image", "case", "context").
+//	    Build()
+//
+//	g.Forward(img, caseLabel, ctx) // three inputs
+func (fb *FlowBuilder) Input(names ...string) *FlowBuilder {
+	if fb.err != nil {
+		return fb
+	}
+	if fb.taps == nil {
+		fb.taps = make(map[string]*nodeRef)
+	}
+
+	for _, name := range names {
+		if _, exists := fb.taps[name]; exists {
+			fb.err = fmt.Errorf("graph: Input tag %q conflicts with existing tag", name)
+			return fb
+		}
+
+		ref := fb.addInputNode(name)
+		fb.taps[name] = ref
+		fb.inputs = append(fb.inputs, exposedPort{
+			name:   name,
+			nodeID: ref.id,
+			port:   DefaultInput,
+		})
+
+		// Resolve any pending forward references to this tag.
+		if pending, ok := fb.pending[name]; ok {
+			for _, p := range pending {
+				fb.forwardRefs = append(fb.forwardRefs, forwardRef{
+					name:       name,
+					readerID:   p.readerID,
+					writerID:   ref.id,
+					writerPort: ref.outputPort,
+				})
+			}
+			delete(fb.pending, name)
+		}
+	}
+
+	return fb
+}
+
 // Through passes the flow through a module. Requires a single stream
 // (call Merge first if the flow is split).
 func (fb *FlowBuilder) Through(m nn.Module) *FlowBuilder {
@@ -565,6 +618,22 @@ func (fb *FlowBuilder) addStateReadNode(name string) *nodeRef {
 		outputPorts: []string{DefaultOutput},
 		run:         nil, // set by buildGraph
 		params:      func() []*nn.Parameter { return nil },
+	}
+	return &nodeRef{id: nodeID, outputPort: DefaultOutput}
+}
+
+// addInputNode creates an internal passthrough node for an auxiliary graph input.
+func (fb *FlowBuilder) addInputNode(name string) *nodeRef {
+	nodeID := fmt.Sprintf("input_%s_%d", name, fb.counter)
+	fb.counter++
+	fb.nodes[nodeID] = &Node{
+		id:          nodeID,
+		inputPorts:  []string{DefaultInput},
+		outputPorts: []string{DefaultOutput},
+		run: func(inputs []*autograd.Variable) ([]*autograd.Variable, error) {
+			return inputs, nil
+		},
+		params: func() []*nn.Parameter { return nil },
 	}
 	return &nodeRef{id: nodeID, outputPort: DefaultOutput}
 }

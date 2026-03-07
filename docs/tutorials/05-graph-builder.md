@@ -121,6 +121,40 @@ aggregate queries like `AllImproving` and `MeanSlope`. See
 tagging, use `Tag` instead — the builder reports a clear error if you
 mix them up.
 
+## Multiple inputs with Input
+
+Some models need more than one external input — a conditioning signal,
+a label, a second modality. `Input` adds a named auxiliary entry point
+to the graph. It does not interrupt the main flow; downstream nodes
+consume it via `Using`:
+
+```go
+g, _ := graph.From(encoder).Tag("features").
+    Input("condition").                               // second graph input
+    Through(decoder).Using("features", "condition").  // consumes both
+    Build()
+
+g.Forward(image, conditionLabel) // inputs in declaration order
+```
+
+`Forward` receives inputs in the order they appear in the builder:
+the `From` entry first, then each `Input` in chain order.
+
+Multiple auxiliary inputs in a single call:
+
+```go
+g, _ := graph.From(encoder).Tag("image").
+    Input("audio", "text").
+    Through(fusion).Using("image", "audio", "text").
+    Build()
+
+g.Forward(imageInput, audioInput, textInput) // three inputs
+```
+
+Input nodes appear in the graph visualization with the standard input
+shape (`invhouse`) and are tagged automatically, so they participate
+in observation, parameter queries, and all other graph features.
+
 ## Per-element processing with Map
 
 `Map` applies a module to each element along dimension 0:

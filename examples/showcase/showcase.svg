@@ -160,7 +160,7 @@
 <polygon fill="#2c3e50" stroke="#2c3e50" points="208.5,-2356.64 205,-2346.64 201.5,-2356.64 208.5,-2356.64"/>
 </g>
 <!-- softmaxRouter_15 -->
-<g id="node17" class="node">
+<g id="node19" class="node">
 <title>softmaxRouter_15</title>
 <polygon fill="#eaecee" stroke="black" points="347,-918.98 249,-918.98 249,-882.98 347,-882.98 347,-918.98"/>
 <text text-anchor="middle" x="298" y="-904.18" font-family="Helvetica,sans-Serif" font-size="11.00">softmaxRouter</text>
@@ -357,37 +357,37 @@
 <path fill="none" stroke="#2c3e50" d="M136,-1078.81C136,-1065.67 136,-1047.17 136,-1031.4"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" points="139.5,-1031.01 136,-1021.01 132.5,-1031.01 139.5,-1031.01"/>
 </g>
+<!-- Linear_17 -->
+<g id="node17" class="node">
+<title>Linear_17</title>
+<polygon fill="#eaecee" stroke="black" points="129,-918.98 45,-918.98 45,-882.98 129,-882.98 129,-918.98"/>
+<text text-anchor="middle" x="87" y="-904.18" font-family="Helvetica,sans-Serif" font-size="11.00">Linear</text>
+<text text-anchor="middle" x="87" y="-892.18" font-family="Helvetica,sans-Serif" font-size="11.00">[72 params]</text>
+</g>
+<!-- loop_14&#45;&gt;Linear_17 -->
+<g id="edge23" class="edge">
+<title>loop_14&#45;&gt;Linear_17</title>
+<path fill="none" stroke="#2c3e50" d="M125.13,-976.67C117.79,-962.31 108.08,-943.27 100.29,-928.01"/>
+<polygon fill="#2c3e50" stroke="#2c3e50" points="103.39,-926.38 95.72,-919.07 97.15,-929.56 103.39,-926.38"/>
+</g>
+<!-- Linear_16 -->
+<g id="node18" class="node">
+<title>Linear_16</title>
+<polygon fill="#eaecee" stroke="black" points="231,-918.98 147,-918.98 147,-882.98 231,-882.98 231,-918.98"/>
+<text text-anchor="middle" x="189" y="-904.18" font-family="Helvetica,sans-Serif" font-size="11.00">Linear</text>
+<text text-anchor="middle" x="189" y="-892.18" font-family="Helvetica,sans-Serif" font-size="11.00">[72 params]</text>
+</g>
+<!-- loop_14&#45;&gt;Linear_16 -->
+<g id="edge22" class="edge">
+<title>loop_14&#45;&gt;Linear_16</title>
+<path fill="none" stroke="#2c3e50" d="M147.76,-976.67C155.69,-962.31 166.2,-943.27 174.63,-928.01"/>
+<polygon fill="#2c3e50" stroke="#2c3e50" points="177.8,-929.51 179.56,-919.07 171.67,-926.13 177.8,-929.51"/>
+</g>
 <!-- loop_14&#45;&gt;softmaxRouter_15 -->
 <g id="edge21" class="edge">
 <title>loop_14&#45;&gt;softmaxRouter_15</title>
 <path fill="none" stroke="#2c3e50" d="M178.03,-981.53C197.49,-973.18 220.56,-962.21 240,-949.98 251.15,-942.96 262.51,-934.03 272.18,-925.78"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" points="274.64,-928.28 279.87,-919.06 270.04,-923 274.64,-928.28"/>
-</g>
-<!-- Linear_16 -->
-<g id="node18" class="node">
-<title>Linear_16</title>
-<polygon fill="#eaecee" stroke="black" points="129,-918.98 45,-918.98 45,-882.98 129,-882.98 129,-918.98"/>
-<text text-anchor="middle" x="87" y="-904.18" font-family="Helvetica,sans-Serif" font-size="11.00">Linear</text>
-<text text-anchor="middle" x="87" y="-892.18" font-family="Helvetica,sans-Serif" font-size="11.00">[72 params]</text>
-</g>
-<!-- loop_14&#45;&gt;Linear_16 -->
-<g id="edge22" class="edge">
-<title>loop_14&#45;&gt;Linear_16</title>
-<path fill="none" stroke="#2c3e50" d="M125.13,-976.67C117.79,-962.31 108.08,-943.27 100.29,-928.01"/>
-<polygon fill="#2c3e50" stroke="#2c3e50" points="103.39,-926.38 95.72,-919.07 97.15,-929.56 103.39,-926.38"/>
-</g>
-<!-- Linear_17 -->
-<g id="node19" class="node">
-<title>Linear_17</title>
-<polygon fill="#eaecee" stroke="black" points="231,-918.98 147,-918.98 147,-882.98 231,-882.98 231,-918.98"/>
-<text text-anchor="middle" x="189" y="-904.18" font-family="Helvetica,sans-Serif" font-size="11.00">Linear</text>
-<text text-anchor="middle" x="189" y="-892.18" font-family="Helvetica,sans-Serif" font-size="11.00">[72 params]</text>
-</g>
-<!-- loop_14&#45;&gt;Linear_17 -->
-<g id="edge23" class="edge">
-<title>loop_14&#45;&gt;Linear_17</title>
-<path fill="none" stroke="#2c3e50" d="M147.76,-976.67C155.69,-962.31 166.2,-943.27 174.63,-928.01"/>
-<polygon fill="#2c3e50" stroke="#2c3e50" points="177.8,-929.51 179.56,-919.07 171.67,-926.13 177.8,-929.51"/>
 </g>
 <!-- switch_19 -->
 <g id="node21" class="node">
@@ -408,23 +408,23 @@
 <ellipse fill="#d5dbdb" stroke="black" cx="189" cy="-762.46" rx="53.54" ry="53.54"/>
 <text text-anchor="middle" x="189" y="-759.66" font-family="Helvetica,sans-Serif" font-size="11.00">gated_merge</text>
 </g>
+<!-- Linear_17&#45;&gt;gated_merge_18 -->
+<g id="edge26" class="edge">
+<title>Linear_17&#45;&gt;gated_merge_18</title>
+<path fill="none" stroke="#7f8c8d" d="M99.71,-882.96C112.57,-865.75 133.08,-838.3 151.2,-814.04"/>
+<polygon fill="#7f8c8d" stroke="#7f8c8d" points="154.06,-816.07 157.24,-805.96 148.46,-811.88 154.06,-816.07"/>
+</g>
+<!-- Linear_16&#45;&gt;gated_merge_18 -->
+<g id="edge25" class="edge">
+<title>Linear_16&#45;&gt;gated_merge_18</title>
+<path fill="none" stroke="#7f8c8d" d="M189,-882.96C189,-868.59 189,-847.07 189,-826.24"/>
+<polygon fill="#7f8c8d" stroke="#7f8c8d" points="192.5,-826.1 189,-816.1 185.5,-826.1 192.5,-826.1"/>
+</g>
 <!-- softmaxRouter_15&#45;&gt;gated_merge_18 -->
 <g id="edge24" class="edge">
 <title>softmaxRouter_15&#45;&gt;gated_merge_18</title>
 <path fill="none" stroke="#7f8c8d" d="M284.42,-882.96C270.41,-865.42 247.9,-837.23 228.27,-812.64"/>
 <polygon fill="#7f8c8d" stroke="#7f8c8d" points="230.98,-810.43 222.01,-804.8 225.51,-814.8 230.98,-810.43"/>
-</g>
-<!-- Linear_16&#45;&gt;gated_merge_18 -->
-<g id="edge25" class="edge">
-<title>Linear_16&#45;&gt;gated_merge_18</title>
-<path fill="none" stroke="#7f8c8d" d="M99.71,-882.96C112.57,-865.75 133.08,-838.3 151.2,-814.04"/>
-<polygon fill="#7f8c8d" stroke="#7f8c8d" points="154.06,-816.07 157.24,-805.96 148.46,-811.88 154.06,-816.07"/>
-</g>
-<!-- Linear_17&#45;&gt;gated_merge_18 -->
-<g id="edge26" class="edge">
-<title>Linear_17&#45;&gt;gated_merge_18</title>
-<path fill="none" stroke="#7f8c8d" d="M189,-882.96C189,-868.59 189,-847.07 189,-826.24"/>
-<polygon fill="#7f8c8d" stroke="#7f8c8d" points="192.5,-826.1 189,-816.1 185.5,-826.1 192.5,-826.1"/>
 </g>
 <!-- gated_merge_18&#45;&gt;switch_19 -->
 <g id="edge28" class="edge">
