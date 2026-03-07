@@ -354,6 +354,280 @@ func TestCUDAChain(t *testing.T) {
 	}
 }
 
+func TestOneHot(t *testing.T) {
+	idx, _ := tensor.FromInt64([]int64{0, 2, 1}, []int64{3})
+	oh := tensor.OneHot(idx, 4, 0)
+	if err := oh.Err(); err != nil {
+		t.Fatalf("OneHot: %v", err)
+	}
+	got, _ := oh.Float32Data()
+	want := []float32{
+		1, 0, 0, 0,
+		0, 0, 1, 0,
+		0, 1, 0, 0,
+	}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("one_hot[%d] = %f, want %f", i, got[i], v)
+		}
+	}
+	shape := oh.Shape()
+	if shape[0] != 3 || shape[1] != 4 {
+		t.Errorf("shape = %v, want [3 4]", shape)
+	}
+}
+
+func TestEye(t *testing.T) {
+	eye, err := tensor.Eye(3)
+	if err != nil {
+		t.Fatalf("Eye: %v", err)
+	}
+	got, _ := eye.Float32Data()
+	want := []float32{1, 0, 0, 0, 1, 0, 0, 0, 1}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("eye[%d] = %f, want %f", i, got[i], v)
+		}
+	}
+}
+
+func TestInt64Data(t *testing.T) {
+	x, _ := tensor.FromInt64([]int64{10, 20, 30}, []int64{3})
+	got, err := x.Int64Data()
+	if err != nil {
+		t.Fatalf("Int64Data: %v", err)
+	}
+	want := []int64{10, 20, 30}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("Int64Data[%d] = %d, want %d", i, got[i], v)
+		}
+	}
+}
+
+func TestAbs(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{-3, 2, -1, 0}, []int64{4})
+	got, _ := x.Abs().Float32Data()
+	want := []float32{3, 2, 1, 0}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("Abs[%d] = %f, want %f", i, got[i], v)
+		}
+	}
+}
+
+func TestPow(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{2, 3, 4}, []int64{3})
+	got, _ := x.Pow(2).Float32Data()
+	want := []float32{4, 9, 16}
+	for i, v := range want {
+		if math.Abs(float64(got[i]-v)) > 1e-5 {
+			t.Errorf("Pow[%d] = %f, want %f", i, got[i], v)
+		}
+	}
+}
+
+func TestClamp(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{-5, 0, 3, 10}, []int64{4})
+	got, _ := x.Clamp(-1, 5).Float32Data()
+	want := []float32{-1, 0, 3, 5}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("Clamp[%d] = %f, want %f", i, got[i], v)
+		}
+	}
+}
+
+func TestArange(t *testing.T) {
+	a, err := tensor.Arange(0, 5, 1)
+	if err != nil {
+		t.Fatalf("Arange: %v", err)
+	}
+	got, _ := a.Float32Data()
+	want := []float32{0, 1, 2, 3, 4}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("Arange[%d] = %f, want %f", i, got[i], v)
+		}
+	}
+}
+
+func TestArangeEnd(t *testing.T) {
+	a, err := tensor.ArangeEnd(3)
+	if err != nil {
+		t.Fatalf("ArangeEnd: %v", err)
+	}
+	got, _ := a.Float32Data()
+	if len(got) != 3 || got[0] != 0 || got[2] != 2 {
+		t.Errorf("ArangeEnd = %v, want [0 1 2]", got)
+	}
+}
+
+func TestFull(t *testing.T) {
+	f, err := tensor.Full([]int64{2, 3}, 7.0)
+	if err != nil {
+		t.Fatalf("Full: %v", err)
+	}
+	got, _ := f.Float32Data()
+	for i, v := range got {
+		if v != 7.0 {
+			t.Errorf("Full[%d] = %f, want 7.0", i, v)
+		}
+	}
+}
+
+func TestSqueeze(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3, 1})
+	s := x.Squeeze(0)
+	if shape := s.Shape(); len(shape) != 2 || shape[0] != 3 || shape[1] != 1 {
+		t.Errorf("Squeeze(0) shape = %v, want [3 1]", shape)
+	}
+	s2 := x.Squeeze(2)
+	if shape := s2.Shape(); len(shape) != 2 || shape[0] != 1 || shape[1] != 3 {
+		t.Errorf("Squeeze(2) shape = %v, want [1 3]", shape)
+	}
+	// Non-1 dim: no change.
+	s3 := x.Squeeze(1)
+	if shape := s3.Shape(); len(shape) != 3 {
+		t.Errorf("Squeeze(1) should be no-op, got shape %v", shape)
+	}
+}
+
+func TestUnsqueeze(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	u := x.Unsqueeze(0)
+	if shape := u.Shape(); len(shape) != 2 || shape[0] != 1 || shape[1] != 3 {
+		t.Errorf("Unsqueeze(0) shape = %v, want [1 3]", shape)
+	}
+	u2 := x.Unsqueeze(1)
+	if shape := u2.Shape(); len(shape) != 2 || shape[0] != 3 || shape[1] != 1 {
+		t.Errorf("Unsqueeze(1) shape = %v, want [3 1]", shape)
+	}
+}
+
+func TestFlatten(t *testing.T) {
+	x, _ := tensor.FromFloat32(make([]float32, 24), []int64{2, 3, 4})
+	f := x.Flatten(1)
+	if shape := f.Shape(); len(shape) != 2 || shape[0] != 2 || shape[1] != 12 {
+		t.Errorf("Flatten(1) shape = %v, want [2 12]", shape)
+	}
+	f0 := x.Flatten(0)
+	if shape := f0.Shape(); len(shape) != 1 || shape[0] != 24 {
+		t.Errorf("Flatten(0) shape = %v, want [24]", shape)
+	}
+}
+
+func TestPermute(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{1, 2, 3})
+	p := x.Permute(0, 2, 1)
+	if shape := p.Shape(); shape[0] != 1 || shape[1] != 3 || shape[2] != 2 {
+		t.Errorf("Permute shape = %v, want [1 3 2]", shape)
+	}
+}
+
+func TestDivScalar(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{10, 20, 30}, []int64{3})
+	got, _ := x.DivScalar(10).Float32Data()
+	want := []float32{1, 2, 3}
+	for i, v := range want {
+		if math.Abs(float64(got[i]-v)) > 1e-5 {
+			t.Errorf("DivScalar[%d] = %f, want %f", i, got[i], v)
+		}
+	}
+}
+
+func TestMean(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{4})
+	got, _ := x.Mean().Float32Data()
+	if math.Abs(float64(got[0])-2.5) > 1e-5 {
+		t.Errorf("Mean = %f, want 2.5", got[0])
+	}
+}
+
+func TestMin(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{3, 1, 4, 1, 5}, []int64{5})
+	got, _ := x.Min().Float32Data()
+	if got[0] != 1 {
+		t.Errorf("Min = %f, want 1", got[0])
+	}
+}
+
+func TestMinDim(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{3, 1, 4, 2}, []int64{2, 2})
+	got, _ := x.MinDim(1, false).Float32Data()
+	want := []float32{1, 2}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("MinDim[%d] = %f, want %f", i, got[i], v)
+		}
+	}
+}
+
+func TestArgMax(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{1, 5, 3, 7, 2, 4}, []int64{2, 3})
+	got, _ := x.ArgMax(1, false).Int64Data()
+	want := []int64{1, 0}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("ArgMax[%d] = %d, want %d", i, got[i], v)
+		}
+	}
+}
+
+func TestWhere(t *testing.T) {
+	cond, _ := tensor.FromFloat32([]float32{1, 0, 1, 0}, []int64{4})
+	x, _ := tensor.FromFloat32([]float32{10, 20, 30, 40}, []int64{4})
+	y, _ := tensor.FromFloat32([]float32{-1, -2, -3, -4}, []int64{4})
+	got, _ := cond.Where(x, y).Float32Data()
+	want := []float32{10, -2, 30, -4}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("Where[%d] = %f, want %f", i, got[i], v)
+		}
+	}
+}
+
+func TestCatAll(t *testing.T) {
+	a, _ := tensor.FromFloat32([]float32{1, 2}, []int64{2})
+	b, _ := tensor.FromFloat32([]float32{3, 4}, []int64{2})
+	c, _ := tensor.FromFloat32([]float32{5, 6}, []int64{2})
+	got, _ := tensor.CatAll([]*tensor.Tensor{a, b, c}, 0).Float32Data()
+	want := []float32{1, 2, 3, 4, 5, 6}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("CatAll[%d] = %f, want %f", i, got[i], v)
+		}
+	}
+}
+
+func TestComparisonOps(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{-2, -1, 0, 1, 2}, []int64{5})
+
+	ge, _ := x.GEScalar(0).Float32Data()
+	wantGE := []float32{0, 0, 1, 1, 1}
+	for i, v := range wantGE {
+		if ge[i] != v {
+			t.Errorf("GE[%d] = %f, want %f", i, ge[i], v)
+		}
+	}
+
+	le, _ := x.LEScalar(0).Float32Data()
+	wantLE := []float32{1, 1, 1, 0, 0}
+	for i, v := range wantLE {
+		if le[i] != v {
+			t.Errorf("LE[%d] = %f, want %f", i, le[i], v)
+		}
+	}
+
+	lt, _ := x.LTScalar(0).Float32Data()
+	wantLT := []float32{1, 1, 0, 0, 0}
+	for i, v := range wantLT {
+		if lt[i] != v {
+			t.Errorf("LT[%d] = %f, want %f", i, lt[i], v)
+		}
+	}
+}
+
 func TestToDeviceChain(t *testing.T) {
 	if !tensor.CUDAAvailable() {
 		t.Skip("CUDA not available")

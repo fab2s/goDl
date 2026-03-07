@@ -456,6 +456,64 @@ func TestGradCheckNarrowCatRoundtrip(t *testing.T) {
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
+func TestGradCheckAbs(t *testing.T) {
+	// Avoid zero where gradient is undefined.
+	x, _ := tensor.FromFloat32([]float32{-2.0, 1.0, -0.5, 3.0}, []int64{4})
+	gradCheck(t, "Abs", func(v []*autograd.Variable) *autograd.Variable {
+		return v[0].Abs().Sum()
+	}, []*tensor.Tensor{x}, 1e-3)
+}
+
+func TestGradCheckPow(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3})
+	gradCheck(t, "Pow(2)", func(v []*autograd.Variable) *autograd.Variable {
+		return v[0].Pow(2).Sum()
+	}, []*tensor.Tensor{x}, 1e-3)
+}
+
+func TestGradCheckPowFractional(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 4.0}, []int64{3})
+	gradCheck(t, "Pow(0.5)", func(v []*autograd.Variable) *autograd.Variable {
+		return v[0].Pow(0.5).Sum()
+	}, []*tensor.Tensor{x}, 1e-3)
+}
+
+func TestGradCheckClamp(t *testing.T) {
+	// Values in range, at boundaries, and outside.
+	x, _ := tensor.FromFloat32([]float32{-3.0, -0.5, 0.5, 3.0}, []int64{4})
+	gradCheck(t, "Clamp(-1,1)", func(v []*autograd.Variable) *autograd.Variable {
+		return v[0].Clamp(-1, 1).Sum()
+	}, []*tensor.Tensor{x}, 1e-3)
+}
+
+func TestGradCheckSqueeze(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3})
+	gradCheck(t, "Squeeze(0)", func(v []*autograd.Variable) *autograd.Variable {
+		return v[0].Squeeze(0).Sum()
+	}, []*tensor.Tensor{x}, 1e-3)
+}
+
+func TestGradCheckUnsqueeze(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	gradCheck(t, "Unsqueeze(0)", func(v []*autograd.Variable) *autograd.Variable {
+		return v[0].Unsqueeze(0).Sum()
+	}, []*tensor.Tensor{x}, 1e-3)
+}
+
+func TestGradCheckFlatten(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	gradCheck(t, "Flatten(0)", func(v []*autograd.Variable) *autograd.Variable {
+		return v[0].Flatten(0).Sum()
+	}, []*tensor.Tensor{x}, 1e-3)
+}
+
+func TestGradCheckPermute(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	gradCheck(t, "Permute(1,0)", func(v []*autograd.Variable) *autograd.Variable {
+		return v[0].Permute(1, 0).Sum()
+	}, []*tensor.Tensor{x}, 1e-3)
+}
+
 func TestGradCheckSummary(_ *testing.T) {
 	// This test just prints a summary — validates that all grad checks pass above.
 	ops := []string{
@@ -465,6 +523,8 @@ func TestGradCheckSummary(_ *testing.T) {
 		"Sigmoid", "Tanh", "ReLU", "Add", "Sub", "Mul", "Matmul",
 		"Conv2d", "Conv2dBias", "ConvTranspose2d", "AdaptiveAvgPool2d",
 		"GridSample", "BroadcastAdd", "BroadcastMul",
+		"Abs", "Pow", "PowFractional", "Clamp",
+		"Squeeze", "Unsqueeze", "Flatten", "Permute",
 		"Composed: Exp(Log)", "Composed: Sigmoid(Linear)",
 		"Composed: Softmax+CE", "Composed: Reshape+Transpose",
 		"Composed: Narrow+Cat",

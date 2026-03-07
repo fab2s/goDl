@@ -160,6 +160,120 @@ func TestCrossEntropyLoss(t *testing.T) {
 	}
 }
 
+func TestCrossEntropyLossIntIndices(t *testing.T) {
+	// Same test as above but with integer class indices instead of one-hot.
+	// logits = [[2, 1]], target = [0] (class 0 → one-hot [1, 0])
+	pt, _ := tensor.FromFloat32([]float32{2, 1}, []int64{1, 2})
+	defer pt.Release()
+	idxT, _ := tensor.FromInt64([]int64{0}, []int64{1})
+	defer idxT.Release()
+
+	pred := autograd.NewVariable(pt, true)
+	target := autograd.NewVariable(idxT, false)
+
+	loss := nn.CrossEntropyLoss(pred, target)
+	if err := loss.Err(); err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+
+	lossData := mustData(t, loss.Data())
+	expected := float32(0.3133)
+	if math.Abs(float64(lossData[0]-expected)) > 0.01 {
+		t.Errorf("CrossEntropy(int targets) = %f, want ~%f", lossData[0], expected)
+	}
+
+	if err := loss.Backward(); err != nil {
+		t.Fatalf("backward: %v", err)
+	}
+	if pred.Grad() == nil {
+		t.Error("pred gradient is nil")
+	}
+}
+
+func TestBCEWithLogitsLoss(t *testing.T) {
+	// Pred = [2, -2], Target = [1, 0]
+	// BCE(2, 1) = max(2,0) - 2*1 + log(1+exp(-|2|)) = 2 - 2 + log(1+e^-2) ≈ 0.1269
+	// BCE(-2, 0) = max(-2,0) - (-2)*0 + log(1+exp(-|-2|)) = 0 - 0 + log(1+e^-2) ≈ 0.1269
+	// mean ≈ 0.1269
+	pt, _ := tensor.FromFloat32([]float32{2, -2}, []int64{2})
+	tt2, _ := tensor.FromFloat32([]float32{1, 0}, []int64{2})
+	pred := autograd.NewVariable(pt, true)
+	target := autograd.NewVariable(tt2, false)
+	loss := nn.BCEWithLogitsLoss(pred, target)
+	if err := loss.Err(); err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	val := loss.Item()
+	if math.Abs(val-0.1269) > 0.01 {
+		t.Errorf("BCEWithLogitsLoss = %f, want ~0.1269", val)
+	}
+	if err := loss.Backward(); err != nil {
+		t.Fatalf("backward: %v", err)
+	}
+	if pred.Grad() == nil {
+		t.Error("pred gradient is nil")
+	}
+}
+
+func TestL1Loss(t *testing.T) {
+	pt, _ := tensor.FromFloat32([]float32{1, 5, 3}, []int64{3})
+	tt2, _ := tensor.FromFloat32([]float32{2, 3, 3}, []int64{3})
+	pred := autograd.NewVariable(pt, true)
+	target := autograd.NewVariable(tt2, false)
+	loss := nn.L1Loss(pred, target)
+	// |1-2| + |5-3| + |3-3| = 1 + 2 + 0 = 3; mean = 1.0
+	val := loss.Item()
+	if math.Abs(val-1.0) > 1e-4 {
+		t.Errorf("L1Loss = %f, want 1.0", val)
+	}
+	if err := loss.Backward(); err != nil {
+		t.Fatalf("backward: %v", err)
+	}
+}
+
+func TestSmoothL1Loss(t *testing.T) {
+	beta := 1.0
+	pt, _ := tensor.FromFloat32([]float32{0.0, 3.0}, []int64{2})
+	tt2, _ := tensor.FromFloat32([]float32{0.5, 0.0}, []int64{2})
+	pred := autograd.NewVariable(pt, true)
+	target := autograd.NewVariable(tt2, false)
+	loss := nn.SmoothL1Loss(pred, target, beta)
+	// diff = [-0.5, 3.0], |diff| = [0.5, 3.0]
+	// sample 0: |0.5| < 1 → 0.5 * 0.25 / 1 = 0.125
+	// sample 1: |3.0| >= 1 → 3.0 - 0.5 = 2.5
+	// mean = (0.125 + 2.5) / 2 = 1.3125
+	val := loss.Item()
+	if math.Abs(val-1.3125) > 0.01 {
+		t.Errorf("SmoothL1Loss = %f, want 1.3125", val)
+	}
+	if err := loss.Backward(); err != nil {
+		t.Fatalf("backward: %v", err)
+	}
+}
+
+func TestKLDivLoss(t *testing.T) {
+	// input = log-probabilities, target = probabilities
+	// Use simple distributions for verification.
+	logP, _ := tensor.FromFloat32([]float32{-0.5, -1.5}, []int64{1, 2})
+	q, _ := tensor.FromFloat32([]float32{0.7, 0.3}, []int64{1, 2})
+	input := autograd.NewVariable(logP, true)
+	target := autograd.NewVariable(q, false)
+	loss := nn.KLDivLoss(input, target)
+	if err := loss.Err(); err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	// KL = 0.7*(log(0.7) - (-0.5)) + 0.3*(log(0.3) - (-1.5))
+	//    = 0.7*(-0.3567+0.5) + 0.3*(-1.2040+1.5)
+	//    = 0.7*0.1433 + 0.3*0.2960 = 0.1003 + 0.0888 = 0.1891
+	val := loss.Item()
+	if math.Abs(val-0.1891) > 0.02 {
+		t.Errorf("KLDivLoss = %f, want ~0.1891", val)
+	}
+	if err := loss.Backward(); err != nil {
+		t.Fatalf("backward: %v", err)
+	}
+}
+
 // --- SGD Optimizer ---
 
 func TestSGDStep(t *testing.T) {
@@ -1372,6 +1486,28 @@ func TestLoadShapeMismatch(t *testing.T) {
 	err := nn.LoadParameters(&buf, l2.Parameters())
 	if err == nil {
 		t.Error("expected error for shape mismatch")
+	}
+}
+
+func TestSaveLoadParametersFile(t *testing.T) {
+	l, _ := nn.NewLinear(4, 3)
+	origW := mustData(t, l.Parameters()[0].Data())
+
+	path := t.TempDir() + "/test_params.bin"
+	if err := nn.SaveParametersFile(path, l.Parameters()); err != nil {
+		t.Fatalf("SaveParametersFile: %v", err)
+	}
+
+	l2, _ := nn.NewLinear(4, 3)
+	if err := nn.LoadParametersFile(path, l2.Parameters()); err != nil {
+		t.Fatalf("LoadParametersFile: %v", err)
+	}
+
+	loadedW := mustData(t, l2.Parameters()[0].Data())
+	for i := range origW {
+		if origW[i] != loadedW[i] {
+			t.Errorf("weight[%d]: saved=%f loaded=%f", i, origW[i], loadedW[i])
+		}
 	}
 }
 

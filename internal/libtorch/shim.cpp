@@ -547,6 +547,144 @@ extern "C" char* godl_div(TorchTensor a, TorchTensor b, TorchTensor* result) {
     }
 }
 
+// --- Element-wise math (extended) ---
+
+extern "C" char* godl_abs(TorchTensor t, TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t).abs());
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_pow_scalar(TorchTensor t, double exponent,
+                                  TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t).pow(exponent));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_clamp(TorchTensor t, double min_val, double max_val,
+                              TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t).clamp(min_val, max_val));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+// --- Comparison operations ---
+
+extern "C" char* godl_ge_scalar(TorchTensor t, double scalar,
+                                 TorchTensor* result) {
+    try {
+        auto mask = torch::ge(unwrap(t), scalar);
+        *result = wrap(mask.to(unwrap(t).scalar_type()));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_le_scalar(TorchTensor t, double scalar,
+                                 TorchTensor* result) {
+    try {
+        auto mask = torch::le(unwrap(t), scalar);
+        *result = wrap(mask.to(unwrap(t).scalar_type()));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_lt_scalar(TorchTensor t, double scalar,
+                                 TorchTensor* result) {
+    try {
+        auto mask = torch::lt(unwrap(t), scalar);
+        *result = wrap(mask.to(unwrap(t).scalar_type()));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+// --- Shape operations ---
+
+extern "C" char* godl_permute(TorchTensor t, int64_t* dims, int ndim,
+                                TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t).permute(torch::IntArrayRef(dims, ndim)).contiguous());
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+// --- Reduction / indexing ---
+
+extern "C" char* godl_min(TorchTensor t, TorchTensor* result) {
+    try {
+        *result = wrap(unwrap(t).min());
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_min_dim(TorchTensor t, int dim, int keepdim,
+                                TorchTensor* result) {
+    try {
+        auto [values, indices] = unwrap(t).min(dim, (bool)keepdim);
+        *result = wrap(values);
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+extern "C" char* godl_argmax(TorchTensor t, int dim, int keepdim,
+                               TorchTensor* result) {
+    try {
+        *result = wrap(torch::argmax(unwrap(t), dim, (bool)keepdim));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+// --- Conditional ---
+
+extern "C" char* godl_where(TorchTensor condition, TorchTensor x,
+                              TorchTensor y, TorchTensor* result) {
+    try {
+        auto cond = unwrap(condition).to(torch::kBool);
+        *result = wrap(torch::where(cond, unwrap(x), unwrap(y)));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
+// --- Creation (extended) ---
+
+extern "C" char* godl_arange(double start, double end, double step,
+                               int dtype, int device, TorchTensor* result) {
+    try {
+        auto options = torch::TensorOptions()
+            .dtype(to_scalar_type(dtype))
+            .device(to_device(device));
+        *result = wrap(torch::arange(start, end, step, options));
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+}
+
 // --- Convolution ---
 
 extern "C" char* godl_conv2d(TorchTensor input, TorchTensor weight,

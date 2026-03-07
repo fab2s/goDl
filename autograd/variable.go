@@ -119,6 +119,19 @@ func (v *Variable) Err() error {
 	return v.data.Err()
 }
 
+// Item extracts the scalar value from a 0D or 1-element variable as float64.
+// This is the most common operation in training loops (reading loss values).
+func (v *Variable) Item() float64 {
+	if v.Err() != nil {
+		return 0
+	}
+	data, err := v.data.Float32Data()
+	if err != nil || len(data) == 0 {
+		return 0
+	}
+	return float64(data[0])
+}
+
 // valid returns true if the variable can be used in operations.
 func (v *Variable) valid() bool {
 	return v.Err() == nil

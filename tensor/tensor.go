@@ -190,6 +190,71 @@ func FromInt64(data []int64, shape []int64, opts ...Option) (*Tensor, error) {
 	return wrap(raw), nil
 }
 
+// Arange creates a 1D tensor with values [start, start+step, start+2*step, ...) < end.
+func Arange(start, end, step float64, opts ...Option) (*Tensor, error) {
+	o := applyOptions(opts)
+	raw, err := libtorch.Arange(start, end, step, o.dtype.toLibtorch(), o.device.toLibtorch())
+	if err != nil {
+		return nil, err
+	}
+	return wrap(raw), nil
+}
+
+// ArangeEnd creates a 1D tensor with values [0, 1, 2, ..., end-1]. Shorthand for Arange(0, end, 1).
+func ArangeEnd(end float64, opts ...Option) (*Tensor, error) {
+	return Arange(0, end, 1, opts...)
+}
+
+// Full creates a tensor filled with a single value.
+func Full(shape []int64, value float64, opts ...Option) (*Tensor, error) {
+	t, err := Ones(shape, opts...)
+	if err != nil {
+		return nil, err
+	}
+	result := t.MulScalar(value)
+	if err := result.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// OneHot converts a 1D int64 index tensor [B] to a float32 one-hot tensor [B, C].
+// Each row has a 1.0 at the index position and 0.0 elsewhere.
+// C is the number of classes, B is the batch size (inferred from indices if 0).
+func OneHot(indices *Tensor, nClasses, batchSize int64) *Tensor {
+	if err := indices.Err(); err != nil {
+		return errTensor(err)
+	}
+	if batchSize == 0 {
+		batchSize = indices.Shape()[0]
+	}
+	data, err := indices.Float32Data()
+	if err != nil {
+		return errTensor(err)
+	}
+	buf := make([]float32, batchSize*nClasses)
+	for i := int64(0); i < batchSize; i++ {
+		idx := int64(data[i])
+		if idx >= 0 && idx < nClasses {
+			buf[i*nClasses+idx] = 1.0
+		}
+	}
+	t, terr := FromFloat32(buf, []int64{batchSize, nClasses})
+	if terr != nil {
+		return errTensor(terr)
+	}
+	return t
+}
+
+// Eye creates an n×n identity matrix (float32).
+func Eye(n int64, opts ...Option) (*Tensor, error) {
+	buf := make([]float32, n*n)
+	for i := int64(0); i < n; i++ {
+		buf[i*n+i] = 1.0
+	}
+	return FromFloat32(buf, []int64{n, n}, opts...)
+}
+
 // --- Metadata ---
 
 // Shape returns the full shape as a slice.
@@ -249,6 +314,15 @@ func (t *Tensor) Float64Data() ([]float64, error) {
 		return nil, err
 	}
 	return t.raw.Float64Data()
+}
+
+// Int64Data copies the tensor data into a Go int64 slice.
+// If the tensor is not int64, it is cast first.
+func (t *Tensor) Int64Data() ([]int64, error) {
+	if err := t.Err(); err != nil {
+		return nil, err
+	}
+	return t.raw.Int64Data()
 }
 
 // String returns a human-readable summary of the tensor.

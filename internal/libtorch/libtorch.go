@@ -301,6 +301,31 @@ func (t *Tensor) Float64Data() ([]float64, error) {
 	return buf, nil
 }
 
+// Int64Data copies the tensor data into a Go int64 slice.
+// If the tensor is not int64, it is cast first.
+func (t *Tensor) Int64Data() ([]int64, error) {
+	src := t
+	if t.DType() != Int64 {
+		casted, err := ToDType(t, Int64)
+		if err != nil {
+			return nil, err
+		}
+		defer casted.Free()
+		src = casted
+	}
+	n := src.Numel()
+	buf := make([]int64, n)
+	cerr := C.godl_copy_data(
+		src.handle,
+		unsafe.Pointer(&buf[0]),
+		C.int64_t(n*8), // 8 bytes per int64
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
 // --- Basic operations ---
 
 // Add returns a + b (element-wise).
@@ -650,6 +675,155 @@ func Sqrt(t *Tensor) (*Tensor, error) {
 func Div(a, b *Tensor) (*Tensor, error) {
 	var handle C.TorchTensor
 	cerr := C.godl_div(a.handle, b.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// --- Element-wise math (extended) ---
+
+// Abs returns element-wise absolute value.
+func Abs(t *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_abs(t.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// PowScalar raises every element to a scalar exponent.
+func PowScalar(t *Tensor, exponent float64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_pow_scalar(t.handle, C.double(exponent), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// Clamp clamps every element to [minVal, maxVal].
+func Clamp(t *Tensor, minVal, maxVal float64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_clamp(t.handle, C.double(minVal), C.double(maxVal), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// --- Comparison operations ---
+
+// GEScalar returns a float mask: 1.0 where element >= scalar, else 0.0.
+func GEScalar(t *Tensor, scalar float64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_ge_scalar(t.handle, C.double(scalar), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// LEScalar returns a float mask: 1.0 where element <= scalar, else 0.0.
+func LEScalar(t *Tensor, scalar float64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_le_scalar(t.handle, C.double(scalar), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// LTScalar returns a float mask: 1.0 where element < scalar, else 0.0.
+func LTScalar(t *Tensor, scalar float64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_lt_scalar(t.handle, C.double(scalar), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// --- Shape operations ---
+
+// Permute reorders dimensions according to dims.
+func Permute(t *Tensor, dims []int64) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_permute(
+		t.handle,
+		(*C.int64_t)(unsafe.Pointer(&dims[0])),
+		C.int(len(dims)),
+		&handle,
+	)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// --- Reduction / indexing ---
+
+// Min reduces all elements to a scalar minimum.
+func Min(t *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_min(t.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// MinDim returns min values along a dimension.
+func MinDim(t *Tensor, dim int, keepdim bool) (*Tensor, error) {
+	kd := 0
+	if keepdim {
+		kd = 1
+	}
+	var handle C.TorchTensor
+	cerr := C.godl_min_dim(t.handle, C.int(dim), C.int(kd), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// ArgMax returns indices of maximum values along a dimension.
+func ArgMax(t *Tensor, dim int, keepdim bool) (*Tensor, error) {
+	kd := 0
+	if keepdim {
+		kd = 1
+	}
+	var handle C.TorchTensor
+	cerr := C.godl_argmax(t.handle, C.int(dim), C.int(kd), &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// --- Conditional ---
+
+// Where selects elements from x where condition > 0, from y otherwise.
+func Where(condition, x, y *Tensor) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_where(condition.handle, x.handle, y.handle, &handle)
+	if err := checkErr(cerr); err != nil {
+		return nil, err
+	}
+	return &Tensor{handle: handle}, nil
+}
+
+// --- Creation (extended) ---
+
+// Arange creates a 1D tensor with values from start to end (exclusive) with step.
+func Arange(start, end, step float64, dtype DType, device Device) (*Tensor, error) {
+	var handle C.TorchTensor
+	cerr := C.godl_arange(
+		C.double(start), C.double(end), C.double(step),
+		C.int(dtype), C.int(device),
+		&handle,
+	)
 	if err := checkErr(cerr); err != nil {
 		return nil, err
 	}

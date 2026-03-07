@@ -17,6 +17,7 @@ Same GPU kernels as PyTorch. No Python. No GIL. Just Go.
   <a href="#the-graph-builder">Graph Builder</a> &bull;
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#features">Features</a> &bull;
+  <a href="docs/pytorch_migration.md">PyTorch → goDl</a> &bull;
   <a href="docs/tutorials/01-tensors.md">Tutorials</a> &bull;
   <a href="#architecture">Architecture</a>
 </p>
@@ -75,7 +76,7 @@ Requirements: Docker (with NVIDIA Container Toolkit for GPU support).
 git clone https://github.com/fab2s/goDl.git
 cd goDl
 make image    # build dev container (Go + libtorch + CUDA)
-make test     # run all 365 tests (CPU + CUDA)
+make test     # run all 412 tests (CPU + CUDA)
 make test-cpu # run without GPU
 make doc      # local doc server (pkg.go.dev style)
 make shell    # interactive shell in container
@@ -125,7 +126,7 @@ runnable version with data generation and evaluation.
 | **Autograd** | Reverse-mode automatic differentiation. Full backward for every op. |
 | **NN Modules** | `Linear`, `Conv2d`, `ConvTranspose2d`, `LayerNorm`, `BatchNorm`, `Dropout`, `Embedding`, `GRUCell`, `LSTMCell` |
 | **Activations** | `ReLU`, `Sigmoid`, `Tanh`, `GELU`, `SiLU`, `Softmax` |
-| **Losses** | `MSELoss`, `CrossEntropyLoss` |
+| **Losses** | `MSELoss`, `CrossEntropyLoss`, `BCEWithLogitsLoss`, `L1Loss`, `SmoothL1Loss`, `KLDivLoss` |
 | **Optimizers** | `SGD` (with momentum), `Adam`, `AdamW` |
 | **LR Scheduling** | `StepDecay`, `Cosine`, `Warmup` (composable), `ReduceOnPlateau` |
 | **Mixed Precision** | `Float16`/`BFloat16` dtype casting, `GradScaler` for loss scaling |
@@ -158,7 +159,7 @@ runnable version with data generation and evaluation.
 | `nn.ClipGradNorm` | L2 norm gradient clipping |
 | `nn.ClipGradValue` | Element-wise gradient clamping |
 | `g.Freeze(tags...)` / `g.Unfreeze(tags...)` | Freeze parameters by tag name |
-| `nn.SaveParameters` / `nn.LoadParameters` | Binary checkpoint format |
+| `nn.SaveParameters` / `nn.LoadParameters` | Binary checkpoint format (file path or `io.Writer`) |
 | `KaimingUniform/Normal`, `XavierUniform/Normal` | Weight initialization |
 | `data.Loader` | Batched data loading with parallel prefetch and shuffle |
 | LR schedulers | `StepDecay`, `Cosine`, `Warmup`, `ReduceOnPlateau` (composable) |
@@ -288,10 +289,10 @@ and parallelism efficiency per level.
 ### Numerical Verification
 
 Every differentiable path is verified against finite-difference gradients:
-- 32 autograd op-level checks (every op + compositions)
+- 40 autograd op-level checks (every op + compositions)
 - 10 module-level checks (every NN module, input + parameter gradients)
 - 11 exact optimizer step verifications (SGD, Adam, AdamW)
-- 365 tests total, all passing with race detector
+- 412 tests total, all passing with race detector
 
 ## Why Go for Deep Learning?
 
@@ -360,6 +361,12 @@ support: NVIDIA (CUDA), AMD (ROCm), Intel (XPU), Apple Silicon (MPS), and
 CPU. Switching hardware is a build flag, not a code change.
 
 ## Documentation
+
+### PyTorch Migration
+
+Coming from PyTorch? The **[PyTorch → goDl Migration Guide](docs/pytorch_migration.md)** has
+side-by-side examples for every common operation — tensors, autograd, modules, losses,
+optimizers, training loops, and the graph builder.
 
 ### Tutorials
 

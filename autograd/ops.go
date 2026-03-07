@@ -726,6 +726,183 @@ func unbroadcast(grad *tensor.Tensor, targetShape []int64) *tensor.Tensor {
 	return result
 }
 
+// --- Element-wise math (extended, with backward) ---
+
+// Abs returns element-wise absolute value with gradient support.
+// Backward: grad * sign(x), where sign(x) = 1 if x > 0, -1 if x < 0, 0 if x = 0.
+func (v *Variable) Abs() *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.Abs()
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	if !needsGrad(v) {
+		return newVar(result, nil)
+	}
+	return newVar(result, &gradFn{
+		name:   "AbsBackward",
+		inputs: []*Variable{v},
+		apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+			pos := v.data.GTScalar(0)
+			neg := v.data.Neg().GTScalar(0)
+			sign := pos.Sub(neg)
+			return []*tensor.Tensor{grad.Mul(sign)}
+		},
+	})
+}
+
+// Pow raises every element to a scalar exponent with gradient support.
+// Backward: grad * exponent * x^(exponent-1).
+func (v *Variable) Pow(exponent float64) *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.Pow(exponent)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	if !needsGrad(v) {
+		return newVar(result, nil)
+	}
+	return newVar(result, &gradFn{
+		name:   "PowBackward",
+		inputs: []*Variable{v},
+		apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+			return []*tensor.Tensor{grad.Mul(v.data.Pow(exponent - 1).MulScalar(exponent))}
+		},
+	})
+}
+
+// Clamp clamps every element to [minVal, maxVal] with gradient support.
+// Backward: grad passes through where minVal <= x <= maxVal, zero elsewhere.
+func (v *Variable) Clamp(minVal, maxVal float64) *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.Clamp(minVal, maxVal)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	if !needsGrad(v) {
+		return newVar(result, nil)
+	}
+	return newVar(result, &gradFn{
+		name:   "ClampBackward",
+		inputs: []*Variable{v},
+		apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+			mask := v.data.GEScalar(minVal).Mul(v.data.LEScalar(maxVal))
+			return []*tensor.Tensor{grad.Mul(mask)}
+		},
+	})
+}
+
+// --- Shape ops (with backward) ---
+
+// Squeeze removes a dimension of size 1 at the given position.
+func (v *Variable) Squeeze(dim int) *Variable {
+	if !v.valid() {
+		return v
+	}
+	origShape := v.data.Shape()
+	result := v.data.Squeeze(dim)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	if !needsGrad(v) {
+		return newVar(result, nil)
+	}
+	return newVar(result, &gradFn{
+		name:   "SqueezeBackward",
+		inputs: []*Variable{v},
+		apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+			return []*tensor.Tensor{grad.Reshape(origShape)}
+		},
+	})
+}
+
+// Unsqueeze inserts a new dimension of size 1 at the given position.
+func (v *Variable) Unsqueeze(dim int) *Variable {
+	if !v.valid() {
+		return v
+	}
+	origShape := v.data.Shape()
+	result := v.data.Unsqueeze(dim)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	if !needsGrad(v) {
+		return newVar(result, nil)
+	}
+	return newVar(result, &gradFn{
+		name:   "UnsqueezeBackward",
+		inputs: []*Variable{v},
+		apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+			return []*tensor.Tensor{grad.Reshape(origShape)}
+		},
+	})
+}
+
+// Flatten collapses dimensions from startDim to the end into one.
+func (v *Variable) Flatten(startDim int) *Variable {
+	if !v.valid() {
+		return v
+	}
+	origShape := v.data.Shape()
+	result := v.data.Flatten(startDim)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	if !needsGrad(v) {
+		return newVar(result, nil)
+	}
+	return newVar(result, &gradFn{
+		name:   "FlattenBackward",
+		inputs: []*Variable{v},
+		apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+			return []*tensor.Tensor{grad.Reshape(origShape)}
+		},
+	})
+}
+
+// Permute reorders dimensions.
+func (v *Variable) Permute(dims ...int) *Variable {
+	if !v.valid() {
+		return v
+	}
+	result := v.data.Permute(dims...)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+	if !needsGrad(v) {
+		return newVar(result, nil)
+	}
+	// Inverse permutation for backward.
+	inv := make([]int, len(dims))
+	for i, d := range dims {
+		inv[d] = i
+	}
+	return newVar(result, &gradFn{
+		name:   "PermuteBackward",
+		inputs: []*Variable{v},
+		apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+			return []*tensor.Tensor{grad.Permute(inv...)}
+		},
+	})
+}
+
+// Mean reduces all elements to a scalar mean.
+func (v *Variable) Mean() *Variable {
+	n := float64(v.Data().Numel())
+	return v.Sum().MulScalar(1.0 / n)
+}
+
+// DivScalar divides every element by a scalar.
+func (v *Variable) DivScalar(scalar float64) *Variable {
+	return v.MulScalar(1.0 / scalar)
+}
+
 // --- Convolution ---
 
 // Conv2d applies a 2D convolution. bias may be nil.

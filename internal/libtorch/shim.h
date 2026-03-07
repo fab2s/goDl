@@ -124,6 +124,38 @@ char* godl_cat2(TorchTensor a, TorchTensor b, int dim, TorchTensor* result);
 char* godl_sqrt(TorchTensor t, TorchTensor* result);
 char* godl_div(TorchTensor a, TorchTensor b, TorchTensor* result);
 
+// --- Element-wise math (extended) ---
+
+char* godl_abs(TorchTensor t, TorchTensor* result);
+char* godl_pow_scalar(TorchTensor t, double exponent, TorchTensor* result);
+char* godl_clamp(TorchTensor t, double min_val, double max_val, TorchTensor* result);
+
+// --- Comparison operations (return float masks: 0.0 or 1.0) ---
+
+char* godl_ge_scalar(TorchTensor t, double scalar, TorchTensor* result);
+char* godl_le_scalar(TorchTensor t, double scalar, TorchTensor* result);
+char* godl_lt_scalar(TorchTensor t, double scalar, TorchTensor* result);
+
+// --- Shape operations ---
+
+char* godl_permute(TorchTensor t, int64_t* dims, int ndim, TorchTensor* result);
+
+// --- Reduction / indexing ---
+
+char* godl_min(TorchTensor t, TorchTensor* result);
+char* godl_min_dim(TorchTensor t, int dim, int keepdim, TorchTensor* result);
+char* godl_argmax(TorchTensor t, int dim, int keepdim, TorchTensor* result);
+
+// --- Conditional ---
+
+char* godl_where(TorchTensor condition, TorchTensor x, TorchTensor y,
+                  TorchTensor* result);
+
+// --- Creation (extended) ---
+
+char* godl_arange(double start, double end, double step, int dtype, int device,
+                   TorchTensor* result);
+
 // --- Convolution ---
 
 // 2D convolution forward.

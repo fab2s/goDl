@@ -19,20 +19,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: buildx-${{ hashFiles('Dockerfile') }}
-          restore-keys: buildx-
+          key: buildx-cpu-${{ hashFiles('Dockerfile.cpu') }}
+          restore-keys: buildx-cpu-
 
-      - name: Build dev image
+      - name: Build CPU image
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: Dockerfile.cpu
           load: true
-          tags: godl-dev:latest
+          tags: godl-cpu:latest
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
 
       - name: Run tests (CPU)
-        run: docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace godl-dev:latest go test -v ./...
+        run: docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace godl-cpu:latest go test -v ./...
 
       # Rotate cache to avoid unbounded growth
       - name: Update cache

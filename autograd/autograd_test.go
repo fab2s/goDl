@@ -588,3 +588,20 @@ func TestIndexSelectBackward(t *testing.T) {
 	// grad_weight: row 0 = [0,0], row 1 = [2,2], row 2 = [0,0], row 3 = [1,1]
 	assertClose(t, "dw", mustData(t, w.Grad()), []float32{0, 0, 2, 2, 0, 0, 1, 1})
 }
+
+func TestVariableItem(t *testing.T) {
+	// Scalar-like variable (1 element).
+	st, _ := tensor.FromFloat32([]float32{3.14}, []int64{1})
+	v := autograd.NewVariable(st, false)
+	got := v.Item()
+	if got < 3.139 || got > 3.141 {
+		t.Errorf("Item() = %f, want ~3.14", got)
+	}
+
+	// Multi-element — extracts first element.
+	mt, _ := tensor.FromFloat32([]float32{42, 7}, []int64{2})
+	v2 := autograd.NewVariable(mt, false)
+	if v2.Item() != 42 {
+		t.Errorf("Item() = %f, want 42", v2.Item())
+	}
+}

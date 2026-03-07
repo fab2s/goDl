@@ -423,6 +423,235 @@ func (t *Tensor) Div(other *Tensor) *Tensor {
 	return wrap(raw)
 }
 
+// --- Comparison operations ---
+
+// GEScalar returns a float mask: 1.0 where element >= scalar, else 0.0.
+func (t *Tensor) GEScalar(scalar float64) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.GEScalar(t.raw, scalar)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// LEScalar returns a float mask: 1.0 where element <= scalar, else 0.0.
+func (t *Tensor) LEScalar(scalar float64) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.LEScalar(t.raw, scalar)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// LTScalar returns a float mask: 1.0 where element < scalar, else 0.0.
+func (t *Tensor) LTScalar(scalar float64) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.LTScalar(t.raw, scalar)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// --- Shape operations ---
+
+// Squeeze removes a dimension of size 1. If the dimension is not size 1, returns the tensor unchanged.
+func (t *Tensor) Squeeze(dim int) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	shape := t.Shape()
+	if dim < 0 || dim >= len(shape) || shape[dim] != 1 {
+		return t
+	}
+	newShape := make([]int64, 0, len(shape)-1)
+	for i, s := range shape {
+		if i != dim {
+			newShape = append(newShape, s)
+		}
+	}
+	return t.Reshape(newShape)
+}
+
+// Unsqueeze inserts a new dimension of size 1 at the given position.
+func (t *Tensor) Unsqueeze(dim int) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	shape := t.Shape()
+	newShape := make([]int64, len(shape)+1)
+	copy(newShape, shape[:dim])
+	newShape[dim] = 1
+	copy(newShape[dim+1:], shape[dim:])
+	return t.Reshape(newShape)
+}
+
+// Flatten collapses dimensions from startDim to the end into a single dimension.
+// Flatten(0) produces a 1D tensor; Flatten(1) keeps the batch dimension.
+func (t *Tensor) Flatten(startDim int) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	shape := t.Shape()
+	if startDim >= len(shape) {
+		return t
+	}
+	flat := int64(1)
+	for i := startDim; i < len(shape); i++ {
+		flat *= shape[i]
+	}
+	newShape := make([]int64, startDim+1)
+	copy(newShape, shape[:startDim])
+	newShape[startDim] = flat
+	return t.Reshape(newShape)
+}
+
+// Permute reorders dimensions. For example, [B,C,H,W].Permute(0,2,3,1) → [B,H,W,C].
+func (t *Tensor) Permute(dims ...int) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	dims64 := make([]int64, len(dims))
+	for i, d := range dims {
+		dims64[i] = int64(d)
+	}
+	raw, err := libtorch.Permute(t.raw, dims64)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// --- Scalar arithmetic ---
+
+// DivScalar divides every element by a scalar value.
+func (t *Tensor) DivScalar(scalar float64) *Tensor {
+	return t.MulScalar(1.0 / scalar)
+}
+
+// --- Reductions ---
+
+// Mean reduces all elements to a scalar mean.
+func (t *Tensor) Mean() *Tensor {
+	if !t.valid() {
+		return t
+	}
+	return t.Sum().MulScalar(1.0 / float64(t.Numel()))
+}
+
+// Min reduces all elements to a scalar minimum.
+func (t *Tensor) Min() *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.Min(t.raw)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// MinDim returns min values along a dimension.
+func (t *Tensor) MinDim(dim int, keepdim bool) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.MinDim(t.raw, dim, keepdim)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// ArgMax returns indices of maximum values along a dimension (Int64 tensor).
+func (t *Tensor) ArgMax(dim int, keepdim bool) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.ArgMax(t.raw, dim, keepdim)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// Where selects elements from x where t > 0, from y otherwise.
+// t must be a float mask (0.0 or 1.0), as returned by GTScalar, GEScalar, etc.
+func (t *Tensor) Where(x, y *Tensor) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	if !x.valid() {
+		return x
+	}
+	if !y.valid() {
+		return y
+	}
+	raw, err := libtorch.Where(t.raw, x.raw, y.raw)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// CatAll concatenates multiple tensors along a dimension.
+func CatAll(tensors []*Tensor, dim int) *Tensor {
+	if len(tensors) == 0 {
+		return errTensor(fmt.Errorf("tensor: CatAll requires at least one tensor"))
+	}
+	result := tensors[0]
+	for i := 1; i < len(tensors); i++ {
+		result = result.Cat(tensors[i], dim)
+	}
+	return result
+}
+
+// --- Element-wise math (extended) ---
+
+// Abs returns element-wise absolute value.
+func (t *Tensor) Abs() *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.Abs(t.raw)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// Pow raises every element to a scalar exponent.
+func (t *Tensor) Pow(exponent float64) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.PowScalar(t.raw, exponent)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
+// Clamp clamps every element to [minVal, maxVal].
+func (t *Tensor) Clamp(minVal, maxVal float64) *Tensor {
+	if !t.valid() {
+		return t
+	}
+	raw, err := libtorch.Clamp(t.raw, minVal, maxVal)
+	if err != nil {
+		return errTensor(err)
+	}
+	return wrap(raw)
+}
+
 // --- Convolution ---
 
 // Conv2d performs a 2D convolution. bias may be nil.

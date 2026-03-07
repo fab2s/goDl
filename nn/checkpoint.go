@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/fab2s/goDl/tensor"
 )
@@ -74,6 +75,26 @@ func LoadParameters(r io.Reader, params []*Parameter) error {
 		}
 	}
 	return nil
+}
+
+// SaveParametersFile is a convenience wrapper that saves parameters to a file path.
+func SaveParametersFile(path string, params []*Parameter) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return SaveParameters(f, params)
+}
+
+// LoadParametersFile is a convenience wrapper that loads parameters from a file path.
+func LoadParametersFile(path string, params []*Parameter) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return LoadParameters(f, params)
 }
 
 func writeParam(w io.Writer, p *Parameter) error {
