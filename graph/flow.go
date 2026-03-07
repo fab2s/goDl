@@ -53,6 +53,7 @@ type FlowBuilder struct {
 	forwardRefs []forwardRef              // resolved forward refs
 	counter     int
 	err         error
+	openBuilder string // non-empty when a Loop/Map builder hasn't been finalized
 }
 
 // From starts a new graph flow at the given module.
@@ -187,6 +188,23 @@ func (fb *FlowBuilder) Split(modules ...nn.Module) *FlowBuilder {
 	return fb
 }
 
+// Map starts a map construct that applies a body module independently
+// to each element along dim 0 of a tensor. Results are concatenated
+// back along dim 0.
+//
+// Call .Over(tag) to iterate over a tagged tensor, or .Each() to
+// iterate over the current stream. Additional Using refs are broadcast
+// to every invocation.
+//
+//	graph.From(positionDecoder).
+//	    Map(readHead).Each().Using("image").
+//	    Through(decoder).
+//	    Build()
+func (fb *FlowBuilder) Map(body nn.Module) *MapBuilder {
+	fb.openBuilder = "Map (call .Each() or .Over(tag) to finalize)"
+	return &MapBuilder{fb: fb, body: body}
+}
+
 // Loop starts a loop construct that repeats a body module, carrying
 // state between iterations. Call .For(n) to set the iteration count.
 //
@@ -195,6 +213,7 @@ func (fb *FlowBuilder) Split(modules ...nn.Module) *FlowBuilder {
 //	    Through(decoder).
 //	    Build()
 func (fb *FlowBuilder) Loop(body nn.Module) *LoopBuilder {
+	fb.openBuilder = "Loop (call .For(n), .While(cond, max), or .Until(cond, max) to finalize)"
 	return &LoopBuilder{fb: fb, body: body}
 }
 
@@ -361,6 +380,9 @@ func (fb *FlowBuilder) Build() (*Graph, error) {
 	if fb.err != nil {
 		return nil, fb.err
 	}
+	if fb.openBuilder != "" {
+		return nil, fmt.Errorf("graph: incomplete builder: %s", fb.openBuilder)
+	}
 	if len(fb.current) != 1 {
 		return nil, fmt.Errorf("graph: cannot build with %d open streams; use Merge to combine", len(fb.current))
 	}
@@ -378,7 +400,13 @@ func (fb *FlowBuilder) Build() (*Graph, error) {
 		port:   cur.outputPort,
 	})
 
-	return buildGraph(fb.nodes, fb.edges, fb.inputs, fb.outputs, fb.forwardRefs)
+	// Convert taps to tag name → node ID map for visualization.
+	tags := make(map[string]string, len(fb.taps))
+	for name, ref := range fb.taps {
+		tags[name] = ref.id
+	}
+
+	return buildGraph(fb.nodes, fb.edges, fb.inputs, fb.outputs, fb.forwardRefs, tags)
 }
 
 // --- internal helpers ---

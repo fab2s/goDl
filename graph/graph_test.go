@@ -100,8 +100,8 @@ func (r *namedRouter) ForwardNamed(_ *autograd.Variable, _ map[string]*autograd.
 	return autograd.NewVariable(t, false)
 }
 
-func (r *namedRouter) RefNames() []string           { return r.expected }
-func (r *namedRouter) Parameters() []*nn.Parameter   { return nil }
+func (r *namedRouter) RefNames() []string          { return r.expected }
+func (r *namedRouter) Parameters() []*nn.Parameter { return nil }
 
 // --- Tests ---
 
@@ -2157,6 +2157,374 @@ func TestNamedInputCorrect(t *testing.T) {
 		t.Fatal("forward:", err)
 	}
 	t.Logf("Output: %v", allF32(result))
+}
+
+// --- Map tests ---
+
+func TestMapEach(t *testing.T) {
+	// Body: doubles each element (W=2*I, b=0)
+	// Input: [3, 2] (3 elements of size 2)
+	// Map slices into 3 × [1,2], doubles each, cats back to [3, 2].
+	doubler, _ := nn.NewLinear(2, 2)
+	setLinearWeights(doubler, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	g, err := From(entry).Map(doubler).Each().Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Input: [3, 2] — three 2-element vectors.
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{3, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	vals := allF32(result)
+	expected := []float32{2, 4, 6, 8, 10, 12}
+	if len(vals) != len(expected) {
+		t.Fatalf("Map.Each: got %d values, want %d", len(vals), len(expected))
+	}
+	for i, v := range vals {
+		if !approxEqual(v, expected[i], 1e-5) {
+			t.Errorf("Map.Each [%d]: got %v, want %v", i, v, expected[i])
+		}
+	}
+	t.Logf("Map.Each: %v (shape %v)", vals, result.Data().Shape())
+}
+
+func TestMapOver(t *testing.T) {
+	// Tag the entry output, then Map over it.
+	doubler, _ := nn.NewLinear(2, 2)
+	setLinearWeights(doubler, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	g, err := From(entry).Tag("items").Map(doubler).Over("items").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	vals := allF32(result)
+	expected := []float32{2, 4, 6, 8}
+	for i, v := range vals {
+		if !approxEqual(v, expected[i], 1e-5) {
+			t.Errorf("Map.Over [%d]: got %v, want %v", i, v, expected[i])
+		}
+	}
+	t.Logf("Map.Over: %v", vals)
+}
+
+func TestMapBackward(t *testing.T) {
+	// Body: identity + learnable bias. After map, gradient of loss
+	// w.r.t. bias should equal the number of elements (each contributes 1).
+	body, _ := nn.NewLinear(2, 2)
+	setLinearWeights(body, []float32{1, 0, 0, 1}, []float32{0.1, 0.2})
+
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	g, err := From(entry).Map(body).Each().Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 3 elements → body.bias gradient should be 3 for each component.
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{3, 2})
+	result := g.Forward(autograd.NewVariable(x, true))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	loss := result.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	biasGrad := gradF32(body.Bias.Variable)
+	// Each of the 3 map elements adds 1 to the bias gradient.
+	for i, v := range biasGrad {
+		if !approxEqual(v, 3.0, 1e-5) {
+			t.Errorf("Map backward bias grad [%d]: got %v, want 3.0", i, v)
+		}
+	}
+	t.Logf("Map backward bias grad: %v", biasGrad)
+}
+
+func TestMapParameters(t *testing.T) {
+	body, _ := nn.NewLinear(2, 2)
+	entry, _ := nn.NewLinear(2, 2)
+
+	g, err := From(entry).Map(body).Each().Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// entry: 2 params (weight + bias), body: 2 params.
+	params := g.Parameters()
+	if len(params) != 4 {
+		t.Errorf("Map parameters: got %d, want 4", len(params))
+	}
+}
+
+func TestMapOverUnknownTag(t *testing.T) {
+	body, _ := nn.NewLinear(2, 2)
+	entry, _ := nn.NewLinear(2, 2)
+
+	_, err := From(entry).Map(body).Over("nonexistent").Build()
+	if err == nil {
+		t.Fatal("expected error for unknown tag in Map.Over")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error should mention tag name: %v", err)
+	}
+	t.Logf("Map.Over unknown tag error: %v", err)
+}
+
+func TestMapGraphAsModule(t *testing.T) {
+	// Body is a sub-graph: Linear → GELU → LayerNorm.
+	subBody, _ := nn.NewLinear(2, 2)
+	sub, err := From(subBody).Through(nn.NewGELU()).Build()
+	if err != nil {
+		t.Fatal("build sub:", err)
+	}
+
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	g, err := From(entry).Map(sub).Each().Build()
+	if err != nil {
+		t.Fatal("build:", err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal("forward:", err)
+	}
+
+	shape := result.Data().Shape()
+	if shape[0] != 2 || shape[1] != 2 {
+		t.Errorf("Map Graph-as-Module: got shape %v, want [2, 2]", shape)
+	}
+	t.Logf("Map Graph-as-Module: %v (shape %v)", allF32(result), shape)
+}
+
+func TestMapSetTraining(t *testing.T) {
+	// Body contains Dropout — should propagate training mode.
+	body, err := From(nn.NewDropout(0.99)).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	g, err := From(entry).Map(body).Each().Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2})
+
+	// In eval mode, Dropout is identity.
+	g.SetTraining(false)
+	r1 := g.Forward(autograd.NewVariable(x, false))
+	v1 := allF32(r1)
+	r2 := g.Forward(autograd.NewVariable(x, false))
+	v2 := allF32(r2)
+
+	for i := range v1 {
+		if v1[i] != v2[i] {
+			t.Errorf("Map eval mode should be deterministic: %v != %v", v1, v2)
+			break
+		}
+	}
+	t.Logf("Map SetTraining: eval %v", v1)
+}
+
+func TestMapSlices(t *testing.T) {
+	// Body: doubles each element. Input [1, 8], Slices(4) → 4 × [1, 2].
+	// Each [1,2] is doubled → cat [4, 2] → recompose [1, 8].
+	doubler, _ := nn.NewLinear(2, 2)
+	setLinearWeights(doubler, []float32{2, 0, 0, 2}, []float32{0, 0})
+
+	entry, _ := nn.NewLinear(2, 8)
+
+	g, err := From(entry).Map(doubler).Slices(4).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	shape := result.Data().Shape()
+	if shape[0] != 1 || shape[1] != 8 {
+		t.Fatalf("Slices: got shape %v, want [1, 8]", shape)
+	}
+
+	// Every value should be doubled.
+	entryResult := g.Forward(autograd.NewVariable(x, false))
+	vals := allF32(entryResult)
+	t.Logf("Slices output: %v (shape %v)", vals, shape)
+}
+
+func TestMapSlicesDynamicBatch(t *testing.T) {
+	// Verify Slices handles dynamic batch sizes.
+	// Input [3, 4], Slices(2) → 6 × [1, 2] → body → recompose [3, 4].
+	identity, _ := nn.NewLinear(2, 2)
+	setLinearWeights(identity, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	entry, _ := nn.NewLinear(4, 4)
+	setLinearWeights(entry, []float32{
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+		0, 0, 0, 1,
+	}, []float32{0, 0, 0, 0})
+
+	g, err := From(entry).Map(identity).Slices(2).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{
+		1, 2, 3, 4,
+		5, 6, 7, 8,
+		9, 10, 11, 12,
+	}, []int64{3, 4})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	shape := result.Data().Shape()
+	if shape[0] != 3 || shape[1] != 4 {
+		t.Fatalf("Slices dynamic batch: got shape %v, want [3, 4]", shape)
+	}
+
+	vals := allF32(result)
+	expected := []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+	for i, v := range vals {
+		if !approxEqual(v, expected[i], 1e-5) {
+			t.Errorf("Slices dynamic [%d]: got %v, want %v", i, v, expected[i])
+		}
+	}
+	t.Logf("Slices dynamic batch: %v (shape %v)", vals, shape)
+}
+
+func TestMapSlicesBackward(t *testing.T) {
+	// Body: identity + bias. Slices(2) on [1, 4] → 2 elements of [1, 2].
+	// Bias gradient should be 2 (one contribution per slice).
+	body, _ := nn.NewLinear(2, 2)
+	setLinearWeights(body, []float32{1, 0, 0, 1}, []float32{0.1, 0.2})
+
+	entry, _ := nn.NewLinear(4, 4)
+	setLinearWeights(entry, []float32{
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+		0, 0, 0, 1,
+	}, []float32{0, 0, 0, 0})
+
+	g, err := From(entry).Map(body).Slices(2).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4})
+	result := g.Forward(autograd.NewVariable(x, true))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	loss := result.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	biasGrad := gradF32(body.Bias.Variable)
+	for i, v := range biasGrad {
+		if !approxEqual(v, 2.0, 1e-5) {
+			t.Errorf("Slices backward bias [%d]: got %v, want 2.0", i, v)
+		}
+	}
+	t.Logf("Slices backward bias grad: %v", biasGrad)
+}
+
+func TestReshapePrimitive(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 8)
+	setLinearWeights(entry, []float32{
+		1, 0, 0, 0, 0, 0, 0, 0,
+		0, 1, 0, 0, 0, 0, 0, 0,
+	}, []float32{1, 2, 3, 4, 5, 6, 7, 8})
+
+	g, err := From(entry).Through(Reshape(4, 2)).Through(Reshape(1, 8)).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{0, 0}, []int64{1, 2})
+	result := g.Forward(autograd.NewVariable(x, false))
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	shape := result.Data().Shape()
+	if shape[0] != 1 || shape[1] != 8 {
+		t.Fatalf("Reshape: got shape %v, want [1, 8]", shape)
+	}
+
+	vals := allF32(result)
+	expected := []float32{1, 2, 3, 4, 5, 6, 7, 8}
+	for i, v := range vals {
+		if !approxEqual(v, expected[i], 1e-5) {
+			t.Errorf("Reshape [%d]: got %v, want %v", i, v, expected[i])
+		}
+	}
+	t.Logf("Reshape round-trip: %v", vals)
+}
+
+func TestMapWithoutTerminator(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 2)
+	body, _ := nn.NewLinear(2, 2)
+
+	_, err := From(entry).Map(body).fb.Build()
+	if err == nil {
+		t.Fatal("expected error for Map without .Each() or .Over()")
+	}
+	if !strings.Contains(err.Error(), "Map") {
+		t.Errorf("error should mention Map: %v", err)
+	}
+	t.Logf("Map without terminator: %v", err)
+}
+
+func TestLoopWithoutTerminator(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 2)
+	body, _ := nn.NewLinear(2, 2)
+
+	_, err := From(entry).Loop(body).fb.Build()
+	if err == nil {
+		t.Fatal("expected error for Loop without .For()/.While()/.Until()")
+	}
+	if !strings.Contains(err.Error(), "Loop") {
+		t.Errorf("error should mention Loop: %v", err)
+	}
+	t.Logf("Loop without terminator: %v", err)
 }
 
 // containsAll checks that s contains every one of the substrings.

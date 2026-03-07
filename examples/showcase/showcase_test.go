@@ -1,6 +1,7 @@
 package showcase
 
 import (
+	"os"
 	"testing"
 
 	"github.com/fab2s/goDl/autograd"
@@ -137,7 +138,7 @@ func TestBackward(t *testing.T) {
 	params := g.Parameters()
 	withGrad := 0
 	for _, p := range params {
-		grad := p.Variable.Grad()
+		grad := p.Grad()
 		if grad == nil {
 			continue
 		}
@@ -162,16 +163,19 @@ func TestParameters(t *testing.T) {
 	}
 
 	params := g.Parameters()
-	// Top-level (10 × 2 params each = 20):
+	// Top-level (12 × 2 params each = 24):
 	//   embed + LayerNorm + residual + softmaxRouter
 	//   + expertA + expertB + switchBranchA
+	//   + mapEachLinear + mapOverLinear
 	//   + whileBody + untilBody + head
-	// Sub-graphs (4 × block = Linear(2) + GELU(0) + LayerNorm(2) = 4 each):
-	//   split×2 + loopFor + switchBranchB = 16
-	// heavyPathSelector: 0
-	// Total: 20 + 16 = 36
-	if len(params) != 36 {
-		t.Errorf("expected 36 parameters, got %d", len(params))
+	// Sub-graphs:
+	//   Split readHead×2 (h=8): Linear(2) + LayerNorm(2) = 4 each = 8
+	//   Map.Slices readHead×1 (dim=2): Linear(2) + LayerNorm(2) = 4
+	//   ffnBlock×2 (loopFor + switchBranchB): Linear(2) + GELU(0) + LayerNorm(2) = 4 each = 8
+	// heavyPathSelector: 0, Reshape×2: 0
+	// Total: 24 + 8 + 4 + 8 = 44
+	if len(params) != 44 {
+		t.Errorf("expected 44 parameters, got %d", len(params))
 	}
 	t.Logf("Total parameters: %d", len(params))
 
@@ -204,4 +208,28 @@ func TestSetTraining(t *testing.T) {
 	}
 
 	t.Logf("Eval: %v, Train: %v", allF32(result), allF32(result2))
+}
+
+func TestDOT(t *testing.T) {
+	g, err := BuildShowcase()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write DOT file.
+	dot := g.DOT()
+	if len(dot) == 0 {
+		t.Fatal("DOT output is empty")
+	}
+	if err := os.WriteFile("showcase.dot", []byte(dot), 0600); err != nil {
+		t.Fatal("write dot:", err)
+	}
+	t.Logf("Wrote showcase.dot (%d bytes)", len(dot))
+
+	// Render SVG via g.SVG(path).
+	svg, err := g.SVG("showcase.svg")
+	if err != nil {
+		t.Skip("SVG:", err)
+	}
+	t.Logf("Wrote showcase.svg (%d bytes)", len(svg))
 }

@@ -121,6 +121,7 @@ func (lb *LoopBuilder) Until(cond nn.Module, maxIter int) *FlowBuilder {
 // wire is a shared helper that wires a loop node into the graph.
 func (lb *LoopBuilder) wire(run nodeFunc, mod nn.Module) *FlowBuilder {
 	fb := lb.fb
+	fb.openBuilder = ""
 	cur := fb.current[0]
 
 	name := fmt.Sprintf("loop_%d", fb.counter)

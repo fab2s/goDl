@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     ca-certificates \
     git \
+    graphviz \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Layer 3: Go installation (changes on Go version bump) ---

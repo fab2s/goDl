@@ -69,6 +69,7 @@ type Graph struct {
 	levels    [][]*Node          // grouped by execution level (for parallel Forward)
 	edgesFrom map[string][]*Edge // edges grouped by source node for fast routing
 	state     []*stateEntry      // forward-reference state buffers
+	tags      map[string]string  // tag name → node ID (for visualization)
 }
 
 // Forward executes the graph, routing variables along edges between nodes.
@@ -306,7 +307,7 @@ func topologicalLevels(nodes map[string]*Node, edges []*Edge) ([][]*Node, error)
 }
 
 // buildGraph validates and finalizes a graph from its components.
-func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposedPort, fwdRefs []forwardRef) (*Graph, error) {
+func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposedPort, fwdRefs []forwardRef, tags map[string]string) (*Graph, error) {
 	// Validate edges reference valid nodes and ports.
 	for _, edge := range edges {
 		fromNode, ok := nodes[edge.fromNode]
@@ -403,6 +404,7 @@ func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposed
 		levels:    levels,
 		edgesFrom: edgesFrom,
 		state:     state,
+		tags:      tags,
 	}, nil
 }
 
