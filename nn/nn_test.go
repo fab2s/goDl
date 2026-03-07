@@ -1374,3 +1374,136 @@ func TestLoadShapeMismatch(t *testing.T) {
 		t.Error("expected error for shape mismatch")
 	}
 }
+
+// --- Gradient clipping ---
+
+func TestClipGradNorm(t *testing.T) {
+	l, _ := nn.NewLinear(2, 2)
+
+	// Set known weights, do a forward+backward to get gradients.
+	w, _ := tensor.FromFloat32([]float32{1, 0, 0, 1}, []int64{2, 2})
+	l.Weight.SetData(w)
+	b, _ := tensor.FromFloat32([]float32{0, 0}, []int64{2})
+	l.Bias.SetData(b)
+
+	x, _ := tensor.FromFloat32([]float32{3, 4}, []int64{1, 2})
+	input := autograd.NewVariable(x, true)
+	out := l.Forward(input)
+	loss := out.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check that gradients exist.
+	params := l.Parameters()
+	origNorm := nn.ClipGradNorm(params, 1000) // no clipping
+	if origNorm < 1.0 {
+		t.Fatalf("expected meaningful norm, got %f", origNorm)
+	}
+	t.Logf("Original grad norm: %f", origNorm)
+
+	// Now clip to a small norm.
+	// Re-do backward to restore original gradients.
+	for _, p := range params {
+		p.ZeroGrad()
+	}
+	input2 := autograd.NewVariable(x, true)
+	out2 := l.Forward(input2)
+	loss2 := out2.Sum()
+	if err := loss2.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	maxNorm := 1.0
+	returnedNorm := nn.ClipGradNorm(params, maxNorm)
+	if returnedNorm < maxNorm {
+		t.Errorf("expected norm >= maxNorm, got %f", returnedNorm)
+	}
+
+	// Verify post-clip norm ≈ maxNorm.
+	postNormSq := 0.0
+	for _, p := range params {
+		grad := p.Grad()
+		if grad == nil {
+			continue
+		}
+		data := mustData(t, grad)
+		for _, v := range data {
+			postNormSq += float64(v) * float64(v)
+		}
+	}
+	postNorm := math.Sqrt(postNormSq)
+	if math.Abs(postNorm-maxNorm) > 1e-4 {
+		t.Errorf("post-clip norm: %f, want %f", postNorm, maxNorm)
+	}
+	t.Logf("Post-clip norm: %f (max: %f)", postNorm, maxNorm)
+}
+
+func TestClipGradNormNoOp(t *testing.T) {
+	l, _ := nn.NewLinear(2, 1)
+
+	x, _ := tensor.FromFloat32([]float32{0.1, 0.2}, []int64{1, 2})
+	input := autograd.NewVariable(x, true)
+	out := l.Forward(input)
+	loss := out.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Clip with a very large maxNorm — should be a no-op.
+	params := l.Parameters()
+	origGrads := make([][]float32, len(params))
+	for i, p := range params {
+		if g := p.Grad(); g != nil {
+			origGrads[i] = mustData(t, g)
+		}
+	}
+
+	nn.ClipGradNorm(params, 1000)
+
+	for i, p := range params {
+		if g := p.Grad(); g != nil {
+			data := mustData(t, g)
+			for j, v := range data {
+				if math.Abs(float64(v)-float64(origGrads[i][j])) > 1e-6 {
+					t.Errorf("param %d: gradient changed when it shouldn't", i)
+				}
+			}
+		}
+	}
+}
+
+func TestClipGradValue(t *testing.T) {
+	l, _ := nn.NewLinear(2, 2)
+
+	w, _ := tensor.FromFloat32([]float32{10, 0, 0, 10}, []int64{2, 2})
+	l.Weight.SetData(w)
+	b, _ := tensor.FromFloat32([]float32{0, 0}, []int64{2})
+	l.Bias.SetData(b)
+
+	x, _ := tensor.FromFloat32([]float32{3, 4}, []int64{1, 2})
+	input := autograd.NewVariable(x, true)
+	out := l.Forward(input)
+	loss := out.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	maxVal := 0.5
+	origMax := nn.ClipGradValue(l.Parameters(), maxVal)
+	t.Logf("Original max abs gradient: %f", origMax)
+
+	// Verify all gradient values are within [-maxVal, maxVal].
+	for _, p := range l.Parameters() {
+		grad := p.Grad()
+		if grad == nil {
+			continue
+		}
+		data := mustData(t, grad)
+		for _, v := range data {
+			if math.Abs(float64(v)) > maxVal+1e-6 {
+				t.Errorf("gradient value %f exceeds max %f", v, maxVal)
+			}
+		}
+	}
+}

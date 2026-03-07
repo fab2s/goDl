@@ -45,6 +45,10 @@ type exposedPort struct {
 // before Tag in the flow, the state carries between Forward() calls —
 // enabling recurrent connections inside loops and persistent state
 // across training steps.
+//
+// On the first Forward() call, value is nil. The graph execution
+// auto-fills nil state inputs with ZerosLike(stream), so modules
+// never receive nil — they get zero tensors matching the stream shape.
 type stateEntry struct {
 	name       string
 	readerID   string             // state_read node that outputs this value
@@ -70,6 +74,7 @@ type Graph struct {
 	edgesFrom map[string][]*Edge // edges grouped by source node for fast routing
 	state     []*stateEntry      // forward-reference state buffers
 	tags      map[string]string  // tag name → node ID (for visualization)
+	frozen    map[string]bool    // frozen tag names (for parameter freezing)
 }
 
 // Forward executes the graph, routing variables along edges between nodes.
@@ -130,6 +135,7 @@ func (g *Graph) executeLevel(
 		wg.Add(1)
 		go func(idx int, n *Node) {
 			defer wg.Done()
+			zeroFillNilInputs(slots[n.id])
 			outs, err := n.run(slots[n.id])
 			if err != nil {
 				errs[idx] = fmt.Errorf("graph: node %q: %w", n.id, err)
@@ -152,12 +158,27 @@ func (g *Graph) executeLevel(
 	return nil
 }
 
+// zeroFillNilInputs replaces nil inputs (from uninitialized forward refs)
+// with zero-valued variables matching the stream input's shape.
+// This makes nil handling transparent — modules never receive nil.
+func zeroFillNilInputs(inputs []*autograd.Variable) {
+	if len(inputs) < 2 || inputs[0] == nil {
+		return
+	}
+	for i := 1; i < len(inputs); i++ {
+		if inputs[i] == nil {
+			inputs[i] = autograd.NewVariable(inputs[0].Data().ZerosLike(), false)
+		}
+	}
+}
+
 // executeAndRoute runs a single node and routes its outputs downstream.
 func (g *Graph) executeAndRoute(
 	node *Node,
 	slots map[string][]*autograd.Variable,
 	nodeOutputs map[string][]*autograd.Variable,
 ) error {
+	zeroFillNilInputs(slots[node.id])
 	outs, err := node.run(slots[node.id])
 	if err != nil {
 		return fmt.Errorf("graph: node %q: %w", node.id, err)
@@ -221,6 +242,70 @@ func (g *Graph) SetTraining(training bool) {
 			continue
 		}
 		nn.SetTraining(node.module, training)
+	}
+}
+
+// ParametersByTag returns parameters belonging to the module at the
+// tagged node. If the module is a sub-graph, its parameters are included
+// recursively. Returns nil for unknown tags or nodes without parameters.
+//
+// Use this for selective parameter freezing or per-group learning rates:
+//
+//	// Freeze encoder parameters after backward.
+//	for _, p := range g.ParametersByTag("encoder") {
+//	    p.ZeroGrad()
+//	}
+//	optimizer.Step()
+func (g *Graph) ParametersByTag(tag string) []*nn.Parameter {
+	nodeID, ok := g.tags[tag]
+	if !ok {
+		return nil
+	}
+	node, ok := g.nodes[nodeID]
+	if !ok || node.params == nil {
+		return nil
+	}
+	return node.params()
+}
+
+// Freeze prevents gradient updates for parameters at the tagged node(s).
+// After calling Freeze, subsequent Backward() calls will still compute
+// gradients through frozen nodes (for upstream flow), but their parameter
+// gradients are zeroed before optimizer.Step().
+//
+// Call after Build():
+//
+//	g.Freeze("encoder")       // freeze one tag
+//	g.Freeze("embed", "norm") // freeze multiple tags
+//
+// Use Unfreeze to re-enable gradient updates.
+func (g *Graph) Freeze(tags ...string) {
+	if g.frozen == nil {
+		g.frozen = make(map[string]bool)
+	}
+	for _, tag := range tags {
+		g.frozen[tag] = true
+	}
+}
+
+// Unfreeze re-enables gradient updates for previously frozen tags.
+func (g *Graph) Unfreeze(tags ...string) {
+	for _, tag := range tags {
+		delete(g.frozen, tag)
+	}
+}
+
+// ZeroFrozenGrads zeroes out gradients for all frozen parameters.
+// Call between Backward() and optimizer.Step():
+//
+//	loss.Backward()
+//	g.ZeroFrozenGrads()
+//	optimizer.Step()
+func (g *Graph) ZeroFrozenGrads() {
+	for tag := range g.frozen {
+		for _, p := range g.ParametersByTag(tag) {
+			p.ZeroGrad()
+		}
 	}
 }
 

@@ -58,10 +58,9 @@ func wrapModule(m nn.Module, node *Node) nodeFunc {
 // Using refs have port names prefixed with "ref_". Returns nil if the node
 // has no ref ports at all (module should use Forward instead).
 //
-// Nil values (forward refs on first pass) are omitted from the map.
-// Modules should use the standard Go map lookup to handle this:
-//
-//	if state, ok := refs["memory"]; ok { ... }
+// Forward ref values are auto-zeroed by the graph execution before reaching
+// this point, so nil refs should not occur in practice. Any remaining nil
+// values (defensive) are still omitted from the map.
 func extractRefs(ports []string, inputs []*autograd.Variable) map[string]*autograd.Variable {
 	hasRefs := false
 	for _, port := range ports {

@@ -176,6 +176,11 @@ func emitSwitchCluster(b *strings.Builder, node *Node, tags []string) {
 	for i, branch := range sc.branches {
 		branchID := fmt.Sprintf("%s_b%d", node.id, i)
 		branchLabel := fmt.Sprintf("[%d] %s", i, moduleName(branch))
+		if params := branch.Parameters(); len(params) > 0 {
+			if n := paramCount(params); n > 0 {
+				branchLabel += fmt.Sprintf("\n[%s]", formatCount(n))
+			}
+		}
 		fill := "#eaecee"
 		if _, ok := branch.(*Graph); ok {
 			fill = "#d6eaf8" // sub-graph
@@ -218,6 +223,13 @@ func nodeLabel(node *Node, tags []string) string {
 	// Enhance label for map composites.
 	if mc, ok := node.module.(*mapComposite); ok {
 		label += fmt.Sprintf("\nbody: %s", moduleName(mc.body))
+	}
+
+	// Add parameter count.
+	if node.params != nil {
+		if n := paramCount(node.params()); n > 0 {
+			label += fmt.Sprintf("\n[%s]", formatCount(n))
+		}
 	}
 
 	// Add tag annotations.
@@ -342,4 +354,25 @@ func isActivation(id string) bool {
 
 func isNorm(id string) bool {
 	return strings.HasPrefix(id, "LayerNorm_") || strings.HasPrefix(id, "BatchNorm_")
+}
+
+// paramCount returns the total number of scalar parameters.
+func paramCount(params []*nn.Parameter) int64 {
+	var total int64
+	for _, p := range params {
+		total += p.Data().Numel()
+	}
+	return total
+}
+
+// formatCount formats a parameter count with K/M suffixes for readability.
+func formatCount(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM params", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fK params", float64(n)/1_000)
+	default:
+		return fmt.Sprintf("%d params", n)
+	}
 }

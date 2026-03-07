@@ -19,6 +19,15 @@ func setLinearWeights(l *nn.Linear, wData, bData []float32) {
 	l.Bias.SetData(b)
 }
 
+// identityN returns an NxN identity matrix as a flat float32 slice.
+func identityN(n int) []float32 {
+	data := make([]float32, n*n)
+	for i := range n {
+		data[i*n+i] = 1
+	}
+	return data
+}
+
 // f32 extracts the first float32 value from a variable's data.
 func f32(v *autograd.Variable) float32 {
 	data, _ := v.Data().Float32Data()
@@ -1259,6 +1268,48 @@ func TestForwardRefMixedRefs(t *testing.T) {
 	t.Logf("Mixed forward+backward ref: pass1=%v, pass2=%v", v1, v2)
 }
 
+func TestForwardRefAutoZero(t *testing.T) {
+	// Verify that plain Add() (no nil-checking) works as a forward ref
+	// consumer because the graph auto-fills nil state with zeros.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	identity, _ := nn.NewLinear(2, 2)
+	setLinearWeights(identity, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	g, err := From(entry).
+		Through(Add()).Using("memory"). // plain Add — no nil handling
+		Through(identity).Tag("memory").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+
+	// Pass 1: memory auto-zeroed → Add([1,2], [0,0]) = [1,2]
+	r1 := g.Forward(autograd.NewVariable(x, false))
+	if err := r1.Err(); err != nil {
+		t.Fatal("pass 1:", err)
+	}
+	v1 := allF32(r1)
+	if !approxEqual(v1[0], 1.0, 1e-6) || !approxEqual(v1[1], 2.0, 1e-6) {
+		t.Errorf("pass 1: got %v, want [1, 2]", v1)
+	}
+
+	// Pass 2: memory=[1,2] → Add([1,2], [1,2]) = [2,4]
+	r2 := g.Forward(autograd.NewVariable(x, false))
+	if err := r2.Err(); err != nil {
+		t.Fatal("pass 2:", err)
+	}
+	v2 := allF32(r2)
+	if !approxEqual(v2[0], 2.0, 1e-6) || !approxEqual(v2[1], 4.0, 1e-6) {
+		t.Errorf("pass 2: got %v, want [2, 4]", v2)
+	}
+
+	t.Logf("Forward ref auto-zero: pass1=%v, pass2=%v", v1, v2)
+}
+
 func TestParallelWithRace(t *testing.T) {
 	// Build a graph with parallel branches that each do real computation.
 	// Run with -race to verify no data races.
@@ -2466,6 +2517,86 @@ func TestMapSlicesBackward(t *testing.T) {
 	t.Logf("Slices backward bias grad: %v", biasGrad)
 }
 
+func TestMapBatchedEach(t *testing.T) {
+	// Verify batched Map.Each produces same results as element-wise.
+	body, _ := nn.NewLinear(2, 2)
+	setLinearWeights(body, []float32{2, 0, 0, 2}, []float32{1, 1})
+
+	// Element-wise.
+	g1, _ := From(body).Map(body).Each().Build()
+	// Batched.
+	g2, _ := From(body).Map(body).Batched().Each().Build()
+
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{3, 2})
+	r1 := g1.Forward(autograd.NewVariable(x, false))
+	r2 := g2.Forward(autograd.NewVariable(x, false))
+
+	v1 := allF32(r1)
+	v2 := allF32(r2)
+
+	for i := range v1 {
+		if !approxEqual(v1[i], v2[i], 1e-5) {
+			t.Errorf("[%d] element-wise=%f, batched=%f", i, v1[i], v2[i])
+		}
+	}
+	t.Logf("Batched Each: %v (matches element-wise: %v)", v2, v1)
+}
+
+func TestMapBatchedSlices(t *testing.T) {
+	body, _ := nn.NewLinear(2, 2)
+	setLinearWeights(body, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	entry1, _ := nn.NewLinear(8, 8)
+	setLinearWeights(entry1, identityN(8), make([]float32, 8))
+	entry2, _ := nn.NewLinear(8, 8)
+	setLinearWeights(entry2, identityN(8), make([]float32, 8))
+
+	// Element-wise slices.
+	g1, _ := From(entry1).Map(body).Slices(4).Build()
+	// Batched slices.
+	g2, _ := From(entry2).Map(body).Batched().Slices(4).Build()
+
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6, 7, 8}, []int64{1, 8})
+	r1 := g1.Forward(autograd.NewVariable(x, false))
+	r2 := g2.Forward(autograd.NewVariable(x, false))
+
+	v1 := allF32(r1)
+	v2 := allF32(r2)
+
+	for i := range v1 {
+		if !approxEqual(v1[i], v2[i], 1e-5) {
+			t.Errorf("[%d] element-wise=%f, batched=%f", i, v1[i], v2[i])
+		}
+	}
+	t.Logf("Batched Slices: %v (matches element-wise: %v)", v2, v1)
+}
+
+func TestMapBatchedBackward(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	body, _ := nn.NewLinear(2, 2)
+	setLinearWeights(body, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	g, _ := From(entry).Map(body).Batched().Each().Build()
+
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2})
+	result := g.Forward(autograd.NewVariable(x, true))
+	loss := result.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Body bias grad: sum of rows = [2, 2] (2 rows, each contributing 1).
+	biasGrad := gradF32(body.Bias.Variable)
+	for i, v := range biasGrad {
+		if !approxEqual(v, 2.0, 1e-5) {
+			t.Errorf("bias grad[%d]=%f, want 2.0", i, v)
+		}
+	}
+	t.Logf("Batched backward bias grad: %v", biasGrad)
+}
+
 func TestReshapePrimitive(t *testing.T) {
 	entry, _ := nn.NewLinear(2, 8)
 	setLinearWeights(entry, []float32{
@@ -2525,6 +2656,99 @@ func TestLoopWithoutTerminator(t *testing.T) {
 		t.Errorf("error should mention Loop: %v", err)
 	}
 	t.Logf("Loop without terminator: %v", err)
+}
+
+func TestParametersByTag(t *testing.T) {
+	encoder, _ := nn.NewLinear(2, 4)
+	decoder, _ := nn.NewLinear(4, 2)
+
+	g, err := From(encoder).Tag("encoder").
+		Through(decoder).Tag("decoder").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encParams := g.ParametersByTag("encoder")
+	if len(encParams) != 2 { // weight + bias
+		t.Errorf("encoder params: got %d, want 2", len(encParams))
+	}
+
+	decParams := g.ParametersByTag("decoder")
+	if len(decParams) != 2 {
+		t.Errorf("decoder params: got %d, want 2", len(decParams))
+	}
+
+	// Unknown tag.
+	if got := g.ParametersByTag("nonexistent"); got != nil {
+		t.Errorf("expected nil for unknown tag, got %v", got)
+	}
+
+	t.Logf("encoder: %d params, decoder: %d params", len(encParams), len(decParams))
+}
+
+func TestFreezeUnfreeze(t *testing.T) {
+	encoder, _ := nn.NewLinear(2, 4)
+	decoder, _ := nn.NewLinear(4, 2)
+
+	g, err := From(encoder).Tag("encoder").
+		Through(decoder).Tag("decoder").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+
+	// Forward + backward to get gradients.
+	result := g.Forward(autograd.NewVariable(x, true))
+	loss := result.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Freeze encoder, zero frozen grads.
+	g.Freeze("encoder")
+	g.ZeroFrozenGrads()
+
+	// Encoder params should have nil grads.
+	for _, p := range g.ParametersByTag("encoder") {
+		if p.Grad() != nil {
+			t.Error("frozen encoder param should have nil grad")
+		}
+	}
+
+	// Decoder params should still have grads.
+	hasGrad := false
+	for _, p := range g.ParametersByTag("decoder") {
+		if p.Grad() != nil {
+			hasGrad = true
+		}
+	}
+	if !hasGrad {
+		t.Error("decoder params should still have gradients")
+	}
+
+	// Unfreeze and verify grads flow again.
+	g.Unfreeze("encoder")
+	for _, p := range g.Parameters() {
+		p.ZeroGrad()
+	}
+
+	result2 := g.Forward(autograd.NewVariable(x, true))
+	loss2 := result2.Sum()
+	if err := loss2.Backward(); err != nil {
+		t.Fatal(err)
+	}
+	g.ZeroFrozenGrads() // no frozen tags → no-op
+
+	for _, p := range g.ParametersByTag("encoder") {
+		if p.Grad() == nil {
+			t.Error("unfrozen encoder param should have grad")
+		}
+	}
+
+	t.Log("Freeze/Unfreeze: OK")
 }
 
 // containsAll checks that s contains every one of the substrings.

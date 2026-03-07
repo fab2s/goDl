@@ -5,12 +5,12 @@ import (
 	"github.com/fab2s/goDl/nn"
 )
 
-// StateAdd returns a nil-safe additive state cell for use with forward
+// StateAdd returns an additive state cell for use with forward
 // references (Using before Tag).
 //
-// On the first Forward call, the state input is nil — only the stream
-// passes through. On subsequent calls, the previous state is added to
-// the current stream, creating an accumulator.
+// On the first Forward call, the state is auto-zeroed by the graph,
+// so stream + zeros = stream (pass-through). On subsequent calls,
+// the accumulated state is added to the current stream.
 //
 //	graph.From(embed).
 //	    Through(graph.StateAdd()).Using("memory").

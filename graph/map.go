@@ -24,8 +24,27 @@ import (
 //	    Through(decoder).
 //	    Build()
 type MapBuilder struct {
-	fb   *FlowBuilder
-	body nn.Module
+	fb      *FlowBuilder
+	body    nn.Module
+	batched bool
+}
+
+// Batched enables the batched fast path: instead of iterating element
+// by element (Narrow+Cat), the entire source tensor is passed to the
+// body module in one call. This is significantly faster for stateless
+// bodies (Linear, activations, etc.) that handle batch dimensions
+// natively.
+//
+// Use only when the body module processes each batch element independently.
+// Modules that normalize across the batch (e.g. BatchNorm) will produce
+// different results in batched mode.
+//
+//	graph.From(encoder).
+//	    Map(nn.MustLinear(4, 4)).Batched().Each().
+//	    Build()
+func (mb *MapBuilder) Batched() *MapBuilder {
+	mb.batched = true
+	return mb
 }
 
 // Over sets the iteration source to a tagged tensor. The tag must
@@ -110,7 +129,11 @@ func (mb *MapBuilder) Slices(n int) *FlowBuilder {
 		params:      composite.Parameters,
 		module:      composite,
 	}
-	node.run = makeSlicesMapFunc(body, n, node)
+	if mb.batched {
+		node.run = makeBatchedSlicesMapFunc(body, n)
+	} else {
+		node.run = makeSlicesMapFunc(body, n, node)
+	}
 	fb.nodes[name] = node
 
 	fb.edges = append(fb.edges, &Edge{
@@ -143,7 +166,11 @@ func (mb *MapBuilder) wire(source *nodeRef) *FlowBuilder {
 		params:      composite.Parameters,
 		module:      composite,
 	}
-	node.run = makeMapFunc(body, node)
+	if mb.batched {
+		node.run = makeBatchedMapFunc(body, node)
+	} else {
+		node.run = makeMapFunc(body, node)
+	}
 	fb.nodes[name] = node
 
 	fb.edges = append(fb.edges, &Edge{
@@ -279,5 +306,57 @@ func mapBodyForward(body nn.Module, named nn.NamedInputModule, hasNamed bool, el
 		return body.Forward(append([]*autograd.Variable{elem}, broadcastInputs...)...)
 	default:
 		return body.Forward(elem)
+	}
+}
+
+// makeBatchedMapFunc creates a nodeFunc that passes the entire source
+// tensor to the body in one call, bypassing element-by-element iteration.
+// The body must handle batch dimensions natively (e.g. Linear, activations).
+func makeBatchedMapFunc(body nn.Module, _ *Node) nodeFunc {
+	return func(inputs []*autograd.Variable) ([]*autograd.Variable, error) {
+		result := body.Forward(inputs...)
+		if err := result.Err(); err != nil {
+			return nil, fmt.Errorf("map batched: %w", err)
+		}
+		return []*autograd.Variable{result}, nil
+	}
+}
+
+// makeBatchedSlicesMapFunc creates a nodeFunc that decomposes the last
+// dimension into n slices, runs the body on the full decomposed batch
+// in one call, and recomposes. Much faster than element-by-element.
+func makeBatchedSlicesMapFunc(body nn.Module, n int) nodeFunc {
+	return func(inputs []*autograd.Variable) ([]*autograd.Variable, error) {
+		source := inputs[0]
+		shape := source.Data().Shape()
+		if len(shape) < 2 {
+			return nil, fmt.Errorf("map slices batched: input must be at least 2D (got %dD)", len(shape))
+		}
+
+		lastDim := shape[len(shape)-1]
+		if lastDim%int64(n) != 0 {
+			return nil, fmt.Errorf("map slices batched: last dim %d not divisible by %d", lastDim, n)
+		}
+		sliceDim := lastDim / int64(n)
+		origDim0 := shape[0]
+
+		// Decompose: [B, D] → [B*n, D/n]
+		decomposed := source.Reshape([]int64{origDim0 * int64(n), sliceDim})
+
+		// Run body on entire decomposed batch at once.
+		result := body.Forward(decomposed)
+		if err := result.Err(); err != nil {
+			return nil, fmt.Errorf("map slices batched: %w", err)
+		}
+
+		// Recompose: [B*n, outD] → [B, outD*n]
+		resultShape := result.Data().Shape()
+		outFeatures := resultShape[1] * int64(n)
+		recomposed := result.Reshape([]int64{origDim0, outFeatures})
+
+		if err := recomposed.Err(); err != nil {
+			return nil, fmt.Errorf("map slices batched recompose: %w", err)
+		}
+		return []*autograd.Variable{recomposed}, nil
 	}
 }

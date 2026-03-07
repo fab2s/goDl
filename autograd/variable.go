@@ -146,6 +146,15 @@ func (v *Variable) ZeroGrad() {
 	}
 }
 
+// SetGrad replaces the gradient tensor. Used by gradient clipping utilities.
+// The previous gradient (if any) is released.
+func (v *Variable) SetGrad(grad *tensor.Tensor) {
+	if v.grad != nil {
+		v.grad.Release()
+	}
+	v.grad = grad
+}
+
 // SetData replaces the underlying tensor data without affecting gradients
 // or graph connectivity. Used by optimizers to update parameter values.
 func (v *Variable) SetData(data *tensor.Tensor) {

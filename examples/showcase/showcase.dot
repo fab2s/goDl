@@ -9,8 +9,8 @@ digraph G {
     label="level 0";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "Linear_0" [label="Linear\n#input" shape=invhouse fillcolor="#aed6f1"];
     "state_read_memory_21" [label="state_read_memory" shape=diamond fillcolor="#f9e79f"];
+    "Linear_0" [label="Linear\n[24 params]\n#input" shape=invhouse fillcolor="#aed6f1"];
   }
 
   subgraph cluster_level_1 {
@@ -24,15 +24,15 @@ digraph G {
     label="level 2";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "LayerNorm_2" [label="LayerNorm" shape=box fillcolor="#d5f5e3"];
+    "LayerNorm_2" [label="LayerNorm\n[16 params]" shape=box fillcolor="#d5f5e3"];
   }
 
   subgraph cluster_level_3 {
     label="level 3";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "Graph_3" [label="Graph (sub)" shape=box fillcolor="#d6eaf8"];
-    "Graph_4" [label="Graph (sub)" shape=box fillcolor="#d6eaf8"];
+    "Graph_3" [label="Graph (sub)\n[88 params]" shape=box fillcolor="#d6eaf8"];
+    "Graph_4" [label="Graph (sub)\n[88 params]" shape=box fillcolor="#d6eaf8"];
   }
 
   subgraph cluster_level_4 {
@@ -46,7 +46,7 @@ digraph G {
     label="level 5";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "Linear_6" [label="Linear" shape=box fillcolor="#eaecee"];
+    "Linear_6" [label="Linear\n[72 params]" shape=box fillcolor="#eaecee"];
   }
 
   subgraph cluster_level_6 {
@@ -67,7 +67,7 @@ digraph G {
     label="level 8";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "map_9" [label="map\nbody: Graph (sub)" shape=parallelogram fillcolor="#a9cce3"];
+    "map_9" [label="map\nbody: Graph (sub)\n[10 params]" shape=parallelogram fillcolor="#a9cce3"];
   }
 
   subgraph cluster_level_9 {
@@ -81,14 +81,14 @@ digraph G {
     label="level 10";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "map_11" [label="map\nbody: Linear\n#halves" shape=parallelogram fillcolor="#a9cce3"];
+    "map_11" [label="map\nbody: Linear\n[20 params]\n#halves" shape=parallelogram fillcolor="#a9cce3"];
   }
 
   subgraph cluster_level_11 {
     label="level 11";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "map_12" [label="map\nbody: Linear" shape=parallelogram fillcolor="#a9cce3"];
+    "map_12" [label="map\nbody: Linear\n[20 params]" shape=parallelogram fillcolor="#a9cce3"];
   }
 
   subgraph cluster_level_12 {
@@ -102,16 +102,16 @@ digraph G {
     label="level 13";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "loop_14" [label="Graph (sub)\n#refined" shape=box3d fillcolor="#d7bde2"];
+    "loop_14" [label="Graph (sub)\n[88 params]\n#refined" shape=box3d fillcolor="#d7bde2"];
   }
 
   subgraph cluster_level_14 {
     label="level 14";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "softmaxRouter_15" [label="softmaxRouter" shape=box fillcolor="#eaecee"];
-    "Linear_17" [label="Linear" shape=box fillcolor="#eaecee"];
-    "Linear_16" [label="Linear" shape=box fillcolor="#eaecee"];
+    "Linear_16" [label="Linear\n[72 params]" shape=box fillcolor="#eaecee"];
+    "softmaxRouter_15" [label="softmaxRouter\n[18 params]" shape=box fillcolor="#eaecee"];
+    "Linear_17" [label="Linear\n[72 params]" shape=box fillcolor="#eaecee"];
   }
 
   subgraph cluster_level_15 {
@@ -130,8 +130,8 @@ digraph G {
       style=filled; fillcolor="#fef9e7"; color="#f5cba7";
       fontsize=10;
       "switch_19" [label="heavyPathSelector" shape=diamond fillcolor="#f5cba7"];
-      "switch_19_b0" [label="[0] Linear" shape=box fillcolor="#eaecee"];
-      "switch_19_b1" [label="[1] Graph (sub)" shape=box fillcolor="#d6eaf8"];
+      "switch_19_b0" [label="[0] Linear\n[72 params]" shape=box fillcolor="#eaecee"];
+      "switch_19_b1" [label="[1] Graph (sub)\n[88 params]" shape=box fillcolor="#d6eaf8"];
       "switch_19_out" [label="" shape=circle width=0.15 fillcolor="#d5dbdb"];
       "switch_19" -> "switch_19_b0" [style=dashed color="#e67e22" label="0" fontcolor="#e67e22"];
       "switch_19_b0" -> "switch_19_out" [color="#7f8c8d"];
@@ -151,21 +151,21 @@ digraph G {
     label="level 18";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "loop_22" [label="loop\nbody: Linear\ncond: threshHalt" shape=box3d fillcolor="#d7bde2"];
+    "loop_22" [label="loop\nbody: Linear\ncond: threshHalt\n[72 params]" shape=box3d fillcolor="#d7bde2"];
   }
 
   subgraph cluster_level_19 {
     label="level 19";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "loop_23" [label="loop\nbody: Linear\ncond: threshHalt" shape=box3d fillcolor="#d7bde2"];
+    "loop_23" [label="loop\nbody: Linear\ncond: threshHalt\n[72 params]" shape=box3d fillcolor="#d7bde2"];
   }
 
   subgraph cluster_level_20 {
     label="level 20";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "Linear_24" [label="Linear" shape=house fillcolor="#a9dfbf"];
+    "Linear_24" [label="Linear\n[18 params]" shape=house fillcolor="#a9dfbf"];
   }
 
   "Linear_0" -> "GELU_1" [style=solid color="#2c3e50"];
