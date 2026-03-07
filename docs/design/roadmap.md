@@ -365,6 +365,27 @@ provides aggregate queries over multiple trends.
   ParametersByTag, Freeze/Unfreeze
 - 22 tests (10 TagGroup + 12 TrendGroup)
 
+### Trend Health Checks
+
+New query methods on `Trend` and `TrendGroup` for detecting training pathologies
+early — no new collection, just smarter queries on existing epoch history:
+
+- `Oscillating(window, tol)` — detect slope sign alternation (gradient cycling).
+  Count sign changes in consecutive epoch deltas over a window.
+- `Diverging(window)` — detect NaN/Inf appearance or sustained upward slope
+  in loss. Immediate flag on `math.IsNaN`/`math.IsInf` in collected values.
+
+Both compose with TrendGroup: `g.Trends("head").AnyDiverging(5)`.
+
+### Timing Statistics
+
+Richer per-tag timing queries beyond raw trends:
+
+- `TimingTrend(tag).Stats(window)` → `{Avg, Min, Max, StdDev}` over recent
+  batches. Reuses existing `CollectTimings` data, just new accessors.
+- Enables patterns like: log avg/min/max per loop tag to spot performance
+  regression across epochs.
+
 ### Early Exit
 
 Models that can skip remaining layers when confidence is high. Different from
