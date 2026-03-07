@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 
@@ -53,14 +54,16 @@ type FlowBuilder struct {
 	forwardRefs []forwardRef              // resolved forward refs
 	counter     int
 	err         error
-	openBuilder string // non-empty when a Loop/Map builder hasn't been finalized
+	openBuilder string   // non-empty when a Loop/Map builder hasn't been finalized
+	execCtx     *execCtx // shared with loop/map closures for ForwardCtx cancellation
 }
 
 // From starts a new graph flow at the given module.
 // The module's input ports become the graph's inputs.
 func From(m nn.Module) *FlowBuilder {
 	fb := &FlowBuilder{
-		nodes: make(map[string]*Node),
+		nodes:   make(map[string]*Node),
+		execCtx: &execCtx{ctx: context.Background()},
 	}
 
 	ref := fb.addModule(m)
@@ -406,7 +409,7 @@ func (fb *FlowBuilder) Build() (*Graph, error) {
 		tags[name] = ref.id
 	}
 
-	return buildGraph(fb.nodes, fb.edges, fb.inputs, fb.outputs, fb.forwardRefs, tags)
+	return buildGraph(fb.nodes, fb.edges, fb.inputs, fb.outputs, fb.forwardRefs, tags, fb.execCtx)
 }
 
 // --- internal helpers ---

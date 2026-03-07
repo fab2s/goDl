@@ -75,7 +75,7 @@ Requirements: Docker (with NVIDIA Container Toolkit for GPU support).
 git clone https://github.com/fab2s/goDl.git
 cd goDl
 make image    # build dev container (Go + libtorch + CUDA)
-make test     # run all 307 tests (CPU + CUDA)
+make test     # run all 315 tests (CPU + CUDA)
 make test-cpu # run without GPU
 make doc      # local doc server (pkg.go.dev style)
 make shell    # interactive shell in container
@@ -147,6 +147,7 @@ runnable version with data generation and evaluation.
 | `Map(body).Over(tag)` | Iterate over a tagged tensor |
 | `Map(body).Slices(n)` | Decompose last dim into n slices, map, recompose |
 | `.Batched()` | Fast path for Map — full batch in one call |
+| `g.ForwardCtx(ctx, inputs...)` | Context-aware execution — timeouts, cancellation for loops and maps |
 
 ### Training Tools
 
@@ -192,6 +193,28 @@ for epoch := range epochs {
 | `g.Trend(tag)` | Epoch-level trend: `Slope`, `Stalled`, `Improving`, `Converged` |
 | `g.Sub(tag)` | Reach into a sub-graph's metrics — no extra Forward needed |
 
+### Context-Aware Execution
+
+`ForwardCtx` threads Go's `context.Context` through the graph. Loops and
+maps check for cancellation between iterations — enabling wall-clock
+timeouts that Python cannot express:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+result := g.ForwardCtx(ctx, input)  // loops abort if time runs out
+```
+
+This is a Go-native advantage. Python's GIL prevents cooperative
+cancellation inside a forward pass. `torch.compile` breaks on dynamic
+control flow. In goDl, context propagation is zero-cost when unused
+(`context.Background()` checks compile to a nil return) and naturally
+composes with loops, maps, and parallel branches.
+
+Combined with the observation layer, this enables patterns like
+trend-driven loop halts, adaptive computation time with hard deadlines,
+and graceful training interruption — all impossible or clunky in Python.
+
 ### Visualization
 
 ```go
@@ -209,7 +232,7 @@ Every differentiable path is verified against finite-difference gradients:
 - 32 autograd op-level checks (every op + compositions)
 - 10 module-level checks (every NN module, input + parameter gradients)
 - 11 exact optimizer step verifications (SGD, Adam, AdamW)
-- 307 tests total, all passing with race detector
+- 315 tests total, all passing with race detector
 
 ## Why Go for Deep Learning?
 

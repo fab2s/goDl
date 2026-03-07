@@ -26,12 +26,21 @@
 package graph
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
 	"github.com/fab2s/goDl/autograd"
 	"github.com/fab2s/goDl/nn"
 )
+
+// execCtx holds the context.Context for the current Forward call.
+// Created at graph build time and shared with loop/map closures via
+// pointer. ForwardCtx sets the value; loops and maps read it between
+// iterations for cancellation and timeout support.
+type execCtx struct {
+	ctx context.Context
+}
 
 // Edge connects an output port of one node to an input port of another.
 type Edge struct {
@@ -83,6 +92,9 @@ type Graph struct {
 	tags      map[string]string  // tag name → node ID (for visualization)
 	frozen    map[string]bool    // frozen tag names (for parameter freezing)
 
+	// Context — see ForwardCtx.
+	execCtx *execCtx // shared with loop/map closures for cancellation
+
 	// Observation — see observe.go.
 	// tagsByNode and taggedOutputs are initialized at Build time and
 	// populated automatically during Forward (zero runtime cost when
@@ -99,7 +111,24 @@ type Graph struct {
 // Forward executes the graph, routing variables along edges between nodes.
 // Nodes in the same topological level run concurrently via goroutines.
 // Implements nn.Module.
+//
+// For cancellation and timeout support, use [Graph.ForwardCtx] instead.
 func (g *Graph) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	return g.ForwardCtx(context.Background(), inputs...)
+}
+
+// ForwardCtx executes the graph with a context for cancellation and timeouts.
+// Loops (For, While, Until) and Maps check ctx between iterations; if the
+// context is cancelled or its deadline exceeded, execution returns the
+// context error. The context is also checked between topological levels.
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+//	defer cancel()
+//	result := g.ForwardCtx(ctx, input)
+func (g *Graph) ForwardCtx(ctx context.Context, inputs ...*autograd.Variable) *autograd.Variable {
+	g.execCtx.ctx = ctx
+	defer func() { g.execCtx.ctx = context.Background() }()
+
 	if len(inputs) != len(g.inputs) {
 		return autograd.ErrVariable(fmt.Errorf(
 			"graph: expected %d inputs, got %d", len(g.inputs), len(inputs)))
@@ -126,6 +155,9 @@ func (g *Graph) Forward(inputs ...*autograd.Variable) *autograd.Variable {
 	// Execute level by level. Within a level, nodes are independent.
 	nodeOutputs := make(map[string][]*autograd.Variable, len(g.nodes))
 	for _, level := range g.levels {
+		if err := ctx.Err(); err != nil {
+			return autograd.ErrVariable(err)
+		}
 		if err := g.executeLevel(level, slots, nodeOutputs); err != nil {
 			return autograd.ErrVariable(err)
 		}
@@ -418,7 +450,7 @@ func topologicalLevels(nodes map[string]*Node, edges []*Edge) ([][]*Node, error)
 }
 
 // buildGraph validates and finalizes a graph from its components.
-func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposedPort, fwdRefs []forwardRef, tags map[string]string) (*Graph, error) {
+func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposedPort, fwdRefs []forwardRef, tags map[string]string, ec *execCtx) (*Graph, error) {
 	// Validate edges reference valid nodes and ports.
 	for _, edge := range edges {
 		fromNode, ok := nodes[edge.fromNode]
@@ -522,6 +554,7 @@ func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposed
 		edgesFrom:     edgesFrom,
 		state:         state,
 		tags:          tags,
+		execCtx:       ec,
 		tagsByNode:    tagsByNode,
 		taggedOutputs: make(map[string]*autograd.Variable, len(tags)),
 	}, nil

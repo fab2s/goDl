@@ -132,7 +132,7 @@ func (mb *MapBuilder) Slices(n int) *FlowBuilder {
 	if mb.batched {
 		node.run = makeBatchedSlicesMapFunc(body, n)
 	} else {
-		node.run = makeSlicesMapFunc(body, n, node)
+		node.run = makeSlicesMapFunc(body, n, node, fb.execCtx)
 	}
 	fb.nodes[name] = node
 
@@ -169,7 +169,7 @@ func (mb *MapBuilder) wire(source *nodeRef) *FlowBuilder {
 	if mb.batched {
 		node.run = makeBatchedMapFunc(body, node)
 	} else {
-		node.run = makeMapFunc(body, node)
+		node.run = makeMapFunc(body, node, fb.execCtx)
 	}
 	fb.nodes[name] = node
 
@@ -189,7 +189,8 @@ func (mb *MapBuilder) wire(source *nodeRef) *FlowBuilder {
 // makeMapFunc creates a nodeFunc that slices inputs[0] along dim 0
 // and runs the body module on each element. Additional inputs (from
 // Using) are broadcast to every invocation.
-func makeMapFunc(body nn.Module, node *Node) nodeFunc {
+// The execCtx is checked between elements for cancellation.
+func makeMapFunc(body nn.Module, node *Node, ec *execCtx) nodeFunc {
 	return func(inputs []*autograd.Variable) ([]*autograd.Variable, error) {
 		source := inputs[0]
 		shape := source.Data().Shape()
@@ -204,6 +205,9 @@ func makeMapFunc(body nn.Module, node *Node) nodeFunc {
 
 		results := make([]*autograd.Variable, n)
 		for i := int64(0); i < n; i++ {
+			if err := ec.ctx.Err(); err != nil {
+				return nil, err
+			}
 			elem := source.Narrow(0, i, 1) // [1, ...rest]
 			results[i] = mapBodyForward(body, named, hasNamed, elem, broadcastInputs, node.inputPorts[1:])
 			if err := results[i].Err(); err != nil {
@@ -226,7 +230,8 @@ func makeMapFunc(body nn.Module, node *Node) nodeFunc {
 
 // makeSlicesMapFunc creates a nodeFunc that decomposes the last dimension
 // into n slices, maps the body over each, and recomposes.
-func makeSlicesMapFunc(body nn.Module, n int, node *Node) nodeFunc {
+// The execCtx is checked between elements for cancellation.
+func makeSlicesMapFunc(body nn.Module, n int, node *Node, ec *execCtx) nodeFunc {
 	return func(inputs []*autograd.Variable) ([]*autograd.Variable, error) {
 		source := inputs[0]
 		shape := source.Data().Shape()
@@ -251,6 +256,9 @@ func makeSlicesMapFunc(body nn.Module, n int, node *Node) nodeFunc {
 		numRows := origDim0 * int64(n)
 		results := make([]*autograd.Variable, numRows)
 		for i := int64(0); i < numRows; i++ {
+			if err := ec.ctx.Err(); err != nil {
+				return nil, err
+			}
 			elem := decomposed.Narrow(0, i, 1)
 			results[i] = mapBodyForward(body, named, hasNamed, elem, broadcastInputs, node.inputPorts[1:])
 			if err := results[i].Err(); err != nil {

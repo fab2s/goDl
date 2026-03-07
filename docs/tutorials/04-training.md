@@ -216,6 +216,127 @@ autograd.NoGrad(func() {
 })
 ```
 
+## Context-Aware Forward
+
+`ForwardCtx` threads Go's `context.Context` through the graph. Loops
+and maps check for cancellation between iterations. This enables
+wall-clock timeouts, cancellation from another goroutine, and deadline
+enforcement — things Python cannot express inside a forward pass.
+
+### Timeouts for dynamic loops
+
+While and Until loops accept a maximum iteration count, but in serving
+you often need a time bound, not just an iteration cap:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+defer cancel()
+
+result := model.ForwardCtx(ctx, input)
+if err := result.Err(); err != nil {
+    // context.DeadlineExceeded — loop ran out of time.
+    // Fall back to a simpler model or return partial result.
+}
+```
+
+The loop returns the state computed so far. If the context expires
+before the first iteration, `ForwardCtx` returns the context error
+immediately.
+
+### Training with a deadline
+
+In test training or hyperparameter search, you may want to kill a
+run that takes too long per batch:
+
+```go
+for loader.Next() {
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+    pred := model.ForwardCtx(ctx, autograd.NewVariable(input, true))
+    cancel()
+
+    if err := pred.Err(); err != nil {
+        log.Printf("forward timed out, skipping batch: %v", err)
+        continue
+    }
+
+    loss := nn.MSELoss(pred, target)
+    optimizer.ZeroGrad()
+    loss.Backward()
+    optimizer.Step()
+}
+```
+
+### Cancellation from another goroutine
+
+You can cancel a long-running forward pass externally:
+
+```go
+ctx, cancel := context.WithCancel(context.Background())
+
+go func() {
+    // Cancel after receiving a signal, a user request, etc.
+    <-stopCh
+    cancel()
+}()
+
+result := model.ForwardCtx(ctx, input)
+```
+
+### What gets checked
+
+Context is checked at three points during execution:
+
+1. **Between topological levels** — if the graph has multiple sequential
+   stages, cancellation is detected between them.
+2. **Between loop iterations** — For, While, and Until all check before
+   each iteration. Until preserves its at-least-once guarantee by
+   checking only after the first iteration.
+3. **Between map elements** — `Map.Each()` and `Map.Slices(n)` check
+   before each element. `Batched()` maps run in a single call and are
+   not interruptible.
+
+When no context is needed, `Forward` is a zero-overhead wrapper
+around `ForwardCtx(context.Background(), ...)` — the background
+context never cancels, so `ctx.Err()` returns nil immediately (~2ns).
+
+### Combined with trends
+
+Context-aware forward composes naturally with the observation layer.
+For example, abandon training early if loss isn't improving within
+a time budget:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+defer cancel()
+
+for epoch := range maxEpochs {
+    loader.Reset()
+    for loader.Next() {
+        inT, tgtT := loader.Batch()
+        input := autograd.NewVariable(inT, true)
+        target := autograd.NewVariable(tgtT, false)
+
+        pred := model.ForwardCtx(ctx, input)
+        if pred.Err() != nil {
+            break // time budget exhausted
+        }
+
+        loss := nn.MSELoss(pred, target)
+        optimizer.ZeroGrad()
+        loss.Backward()
+        optimizer.Step()
+
+        model.Collect("output")
+    }
+    model.Flush()
+
+    if model.Trend("output").Converged(5, 1e-5) {
+        break // converged — stop early
+    }
+}
+```
+
 ## Complete Example: Learning Cumulative Sum
 
 This example trains a small graph to learn cumulative sum: given `[a, b]`, predict `[a, a+b]`. It is adapted directly from `examples/train/train_test.go`.

@@ -200,6 +200,26 @@ Loop(body).Until(graph.LearnedHalt(hiddenDim), 20)
 `LearnedHalt` has trainable parameters — they appear in the graph's
 `Parameters()` automatically.
 
+### Context-aware loops
+
+All loop types respect `context.Context` when invoked through
+`ForwardCtx`. The context is checked between iterations — if a
+timeout expires or cancellation is requested, the loop exits early:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+defer cancel()
+
+// While loop exits if the timeout fires, even if the condition
+// hasn't signaled halt and maxIter hasn't been reached.
+result := g.ForwardCtx(ctx, input)
+```
+
+Until loops preserve the at-least-once guarantee — the body runs
+once before the first cancellation check. See
+[Training — Context-Aware Forward](04-training.md#context-aware-forward)
+for full details and training patterns.
+
 ### Forward refs inside loops
 
 When the loop body is a sub-graph that uses forward references, the

@@ -52,7 +52,7 @@ func (lb *LoopBuilder) For(n int) *FlowBuilder {
 		return fb
 	}
 
-	return lb.wire(makeForLoopFunc(lb.body, n), lb.body)
+	return lb.wire(makeForLoopFunc(lb.body, n, lb.fb.execCtx), lb.body)
 }
 
 // While repeats the body while the condition module says "continue",
@@ -82,7 +82,7 @@ func (lb *LoopBuilder) While(cond nn.Module, maxIter int) *FlowBuilder {
 	}
 
 	composite := &loopComposite{body: lb.body, cond: cond}
-	return lb.wire(makeWhileLoopFunc(lb.body, cond, maxIter), composite)
+	return lb.wire(makeWhileLoopFunc(lb.body, cond, maxIter, lb.fb.execCtx), composite)
 }
 
 // Until repeats the body until the condition module signals halt, up to
@@ -115,7 +115,7 @@ func (lb *LoopBuilder) Until(cond nn.Module, maxIter int) *FlowBuilder {
 	}
 
 	composite := &loopComposite{body: lb.body, cond: cond}
-	return lb.wire(makeUntilLoopFunc(lb.body, cond, maxIter), composite)
+	return lb.wire(makeUntilLoopFunc(lb.body, cond, maxIter, lb.fb.execCtx), composite)
 }
 
 // wire is a shared helper that wires a loop node into the graph.
@@ -153,10 +153,14 @@ func (lb *LoopBuilder) wire(run nodeFunc, mod nn.Module) *FlowBuilder {
 
 // makeForLoopFunc creates a nodeFunc that executes a body module N times,
 // feeding each iteration's output as the next iteration's input.
-func makeForLoopFunc(body nn.Module, count int) nodeFunc {
+// The execCtx is checked between iterations for cancellation.
+func makeForLoopFunc(body nn.Module, count int, ec *execCtx) nodeFunc {
 	return func(inputs []*autograd.Variable) ([]*autograd.Variable, error) {
 		state := inputs[0]
 		for i := range count {
+			if err := ec.ctx.Err(); err != nil {
+				return nil, err
+			}
 			state = body.Forward(state)
 			if err := state.Err(); err != nil {
 				return nil, fmt.Errorf("loop iteration %d: %w", i, err)
@@ -168,10 +172,14 @@ func makeForLoopFunc(body nn.Module, count int) nodeFunc {
 
 // makeWhileLoopFunc creates a nodeFunc that checks a condition module
 // before each body execution. Positive output = halt.
-func makeWhileLoopFunc(body, cond nn.Module, maxIter int) nodeFunc {
+// The execCtx is checked between iterations for cancellation.
+func makeWhileLoopFunc(body, cond nn.Module, maxIter int, ec *execCtx) nodeFunc {
 	return func(inputs []*autograd.Variable) ([]*autograd.Variable, error) {
 		state := inputs[0]
 		for i := range maxIter {
+			if err := ec.ctx.Err(); err != nil {
+				return nil, err
+			}
 			halt := cond.Forward(state)
 			if err := halt.Err(); err != nil {
 				return nil, fmt.Errorf("loop condition at iteration %d: %w", i, err)
@@ -194,10 +202,17 @@ func makeWhileLoopFunc(body, cond nn.Module, maxIter int) nodeFunc {
 
 // makeUntilLoopFunc creates a nodeFunc that executes body until cond
 // returns a positive scalar. The body always runs at least once.
-func makeUntilLoopFunc(body, cond nn.Module, maxIter int) nodeFunc {
+// The execCtx is checked between iterations for cancellation (after the
+// first iteration, preserving the at-least-once guarantee).
+func makeUntilLoopFunc(body, cond nn.Module, maxIter int, ec *execCtx) nodeFunc {
 	return func(inputs []*autograd.Variable) ([]*autograd.Variable, error) {
 		state := inputs[0]
 		for i := range maxIter {
+			if i > 0 {
+				if err := ec.ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
 			state = body.Forward(state)
 			if err := state.Err(); err != nil {
 				return nil, fmt.Errorf("loop iteration %d: %w", i, err)
