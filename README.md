@@ -11,6 +11,9 @@ Same GPU kernels as PyTorch. No Python. No GIL. Just Go.
 
 <p align="center">
   <a href="https://github.com/fab2s/goDl/actions/workflows/ci.yml"><img src="https://github.com/fab2s/goDl/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pkg.go.dev/github.com/fab2s/goDl"><img src="https://pkg.go.dev/badge/github.com/fab2s/goDl.svg" alt="Go Reference"></a>
+  <a href="https://goreportcard.com/report/github.com/fab2s/goDl"><img src="https://goreportcard.com/badge/github.com/fab2s/goDl" alt="Go Report Card"></a>
+  <a href="https://github.com/fab2s/goDl/blob/main/LICENSE"><img src="https://img.shields.io/github/license/fab2s/goDl" alt="License"></a>
 </p>
 
 <p align="center">
