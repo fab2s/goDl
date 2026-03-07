@@ -456,7 +456,7 @@ func TestGradCheckNarrowCatRoundtrip(t *testing.T) {
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
-func TestGradCheckSummary(t *testing.T) {
+func TestGradCheckSummary(_ *testing.T) {
 	// This test just prints a summary — validates that all grad checks pass above.
 	ops := []string{
 		"Exp", "Log", "Sqrt", "Neg", "AddScalar", "MulScalar",

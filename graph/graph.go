@@ -153,6 +153,15 @@ func (g *Graph) ForwardCtx(ctx context.Context, inputs ...*autograd.Variable) *a
 			"graph: expected %d inputs, got %d", len(g.inputs), len(inputs)))
 	}
 
+	// Auto-reset Resettable modules before execution.
+	if batchSize := inputs[0].Data().Shape()[0]; batchSize > 0 {
+		for _, node := range g.order {
+			if node.module != nil {
+				nn.Reset(node.module, batchSize)
+			}
+		}
+	}
+
 	// Allocate input slots for each node.
 	slots := make(map[string][]*autograd.Variable, len(g.nodes))
 	for _, node := range g.order {

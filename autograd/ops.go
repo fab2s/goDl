@@ -781,6 +781,42 @@ func (v *Variable) Conv2d(weight, bias *Variable, stride, padding, dilation []in
 	return newVar(result, fn)
 }
 
+// --- Expand ---
+
+// Expand broadcasts a variable to a larger shape. Dimensions of size 1 are
+// expanded to the requested size. The backward pass sums gradients along
+// the expanded dimensions to restore the original shape.
+func (v *Variable) Expand(shape []int64) *Variable {
+	if !v.valid() {
+		return v
+	}
+
+	result := v.data.Expand(shape)
+	if err := result.Err(); err != nil {
+		return errVariable(err)
+	}
+
+	var fn *gradFn
+	if needsGrad(v) {
+		origShape := v.data.Shape()
+		fn = &gradFn{
+			name:   "ExpandBackward",
+			inputs: []*Variable{v},
+			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
+				// Sum along dimensions that were expanded (size 1 -> size N).
+				g := grad
+				for i := range origShape {
+					if origShape[i] == 1 && shape[i] != 1 {
+						g = g.SumDim(i, true)
+					}
+				}
+				return []*tensor.Tensor{g}
+			},
+		}
+	}
+	return newVar(result, fn)
+}
+
 // --- Transposed convolution ---
 
 // ConvTranspose2d applies a 2D transposed convolution. bias may be nil.

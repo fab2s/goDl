@@ -200,6 +200,115 @@ Loop(body).Until(graph.LearnedHalt(hiddenDim), 20)
 `LearnedHalt` has trainable parameters — they appear in the graph's
 `Parameters()` automatically.
 
+### Loops with Using — external references
+
+Loop bodies often need access to data that does not change between
+iterations. For example, an attention loop needs the image at every
+step, but the image is not the recurrent state — the hidden vector is.
+
+`Using` after a Loop terminator (`.For`, `.While`, `.Until`) wires a
+tagged value as an extra input to the body at every iteration:
+
+```go
+g, _ := graph.From(&Identity{}).Tag("image").
+    Through(NewH0Init(hiddenDim)).
+    Loop(attentionStep).For(nGlimpses).Using("image").Tag("attention").
+    Through(decoder).
+    Build()
+```
+
+How refs reach the body depends on the body's interface:
+
+- **NamedInputModule** — the body receives `ForwardNamed(state, refs)`
+  where `refs` is a `map[string]*Variable` keyed by tag name.
+- **Plain Module** — refs are appended as extra positional arguments:
+  `Forward(state, image)`.
+
+This is how you build attention mechanisms, cross-attention layers, or
+any loop where the body needs a constant reference without threading it
+through the recurrent state.
+
+### Resettable — auto-reset before Forward
+
+Loop bodies with internal mutable state (fixation location, counter,
+accumulator) need to be reinitialized before each forward pass.
+Rather than requiring the caller to know about and call reset methods,
+implement `nn.Resettable`:
+
+```go
+type Resettable interface {
+    Reset(batchSize int64)
+}
+```
+
+The graph calls `Reset(batchSize)` on every `Resettable` module
+before execution begins. The batch size is inferred from the first
+input tensor's leading dimension. No manual reset calls needed.
+
+```go
+type AttentionStep struct {
+    location *autograd.Variable // mutable per-forward state
+    // ...
+}
+
+func (s *AttentionStep) Reset(batchSize int64) {
+    s.location = zeros(batchSize, 2)
+}
+```
+
+### Traced — per-iteration trajectory collection
+
+Loop bodies often produce side outputs at each iteration that need to
+be collected — fixation locations, attention weights, confidence
+scores. The graph's stream only carries the final state, but training
+losses may need the full trajectory.
+
+Implement `nn.Traced` to have the loop executor collect side outputs
+automatically:
+
+```go
+type Traced interface {
+    Trace() *autograd.Variable
+}
+```
+
+The loop calls `Trace()` once before the first iteration (after Reset)
+to capture the initial state, then once after each iteration. The
+results are stored on the loop node and accessible via `g.Traces(tag)`:
+
+```go
+func (s *AttentionStep) Trace() *autograd.Variable {
+    return s.location // current fixation point
+}
+```
+
+After Forward, retrieve the full trajectory:
+
+```go
+g.Forward(input)
+locations := g.Traces("attention") // [initial, step1, step2, ...]
+// len(locations) == nGlimpses + 1
+```
+
+This eliminates the side-channel pattern where the caller holds a
+reference to an internal module and reads its state after Forward.
+The model struct only needs the graph — no module-specific fields.
+
+### Composing loop interfaces
+
+A loop body can implement any combination of these interfaces:
+
+| Interface | Effect |
+|-----------|--------|
+| `Resettable` | Auto-reset before each Forward |
+| `Traced` | Per-iteration side output collection |
+| `NamedInputModule` | Named ref forwarding from Using |
+| `RefValidator` | Build-time validation of expected refs |
+
+They compose independently. A body implementing all four gets
+auto-reset, trace collection, named refs, and build-time validation —
+all without any manual wiring in the model code.
+
 ### Context-aware loops
 
 All loop types respect `context.Context` when invoked through
@@ -338,6 +447,77 @@ Switch(graph.ArgmaxSelector(hidden, 3), branchA, branchB, branchC)
 Like the Gate routers, `ArgmaxSelector` sums variadic inputs from Using
 before projection.
 
+## Real-world example: attention with Loop + Using + Traced
+
+Here is a complete attention-loop pattern, similar to what you'd use
+for visual attention or iterative refinement with trajectory tracking:
+
+```go
+// AttentionStep is the loop body. It implements:
+//   - nn.Module (Forward + Parameters)
+//   - nn.NamedInputModule (ForwardNamed for Using refs)
+//   - nn.RefValidator (RefNames for build-time check)
+//   - nn.Resettable (Reset for auto-init before Forward)
+//   - nn.Traced (Trace for per-iteration location collection)
+type AttentionStep struct {
+    sensor  Sensor
+    gru     *nn.GRUCell
+    locHead *nn.Linear
+    location *autograd.Variable
+}
+
+func (s *AttentionStep) Reset(batchSize int64) {
+    s.location = zeros(batchSize, 2) // initial fixation at center
+}
+
+func (s *AttentionStep) Trace() *autograd.Variable {
+    return s.location
+}
+
+func (s *AttentionStep) ForwardNamed(h *autograd.Variable, refs map[string]*autograd.Variable) *autograd.Variable {
+    glimpse := s.sensor.Forward(refs["image"], s.location)
+    newH := s.gru.Forward(glimpse, h)
+    s.location = s.locHead.Forward(newH).Tanh()
+    return newH
+}
+
+func (s *AttentionStep) RefNames() []string { return []string{"image"} }
+```
+
+The graph reads like the architecture diagram:
+
+```go
+g, _ := graph.From(&Identity{}).Tag("image").
+    Through(NewH0Init(hiddenDim)).
+    Loop(step).For(nGlimpses).Using("image").Tag("attention").
+    Through(latentHead).Tag("latent").
+    Split(letterHead, caseHead).TagGroup("heads").
+    Merge(&SelectFirst{}).
+    Build()
+```
+
+The model struct only holds the graph — no module references needed:
+
+```go
+type Model struct {
+    Graph   *graph.Graph
+    Decoder *Decoder
+}
+
+func (m *Model) Forward(img, caseLabel *autograd.Variable) *Result {
+    m.Graph.Forward(img)  // auto-resets, auto-traces
+    return &Result{
+        Logits:    m.Graph.Tagged("heads_0"),
+        Latent:    m.Graph.Tagged("latent"),
+        Locations: m.Graph.Traces("attention"),  // [initial, step1, ..., stepN]
+        Recon:     m.Decoder.Forward(m.Graph.Tagged("latent").Cat(caseLabel, 1)),
+    }
+}
+```
+
+No manual `Reset` call. No `Step` field leaking internals. The graph
+owns the lifecycle.
+
 ## Putting it together
 
 The showcase example (`examples/showcase/showcase.go`) uses every
@@ -394,6 +574,9 @@ output := model.Forward(testInput)
 | Fixed loop | `Loop(body).For(n)` | Exactly n iterations |
 | While loop | `Loop(body).While(cond, max)` | 0..max, check before body |
 | Until loop | `Loop(body).Until(cond, max)` | 1..max, check after body |
+| Loop + ref | `Loop(body).For(n).Using("x")` | External ref at each iteration |
+| Loop traces | `g.Traces("tag")` | Side outputs from `Traced` body |
+| Auto-reset | implement `nn.Resettable` | Graph resets before Forward |
 | Soft routing | `Gate(router, experts...)` | All execute, weighted sum |
 | Hard routing | `Switch(router, branches...)` | One executes, index select |
 

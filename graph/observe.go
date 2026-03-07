@@ -92,6 +92,28 @@ func (g *Graph) Tagged(tag string) *autograd.Variable {
 	return g.taggedOutputs[tag]
 }
 
+// Traces returns the per-iteration side outputs collected from a
+// [nn.Traced] loop body at the tagged node. Returns nil if the tag
+// is unknown, the node isn't a loop, or the body doesn't implement Traced.
+//
+// The slice contains one entry per iteration plus the initial state
+// (captured after Reset, before the first iteration). For a loop with
+// N iterations, Traces returns N+1 entries.
+//
+//	g.Forward(input)
+//	locations := g.Traces("attention") // [initial, step1, step2, ...]
+func (g *Graph) Traces(tag string) []*autograd.Variable {
+	nodeID, ok := g.tags[tag]
+	if !ok {
+		return nil
+	}
+	node, ok := g.nodes[nodeID]
+	if !ok {
+		return nil
+	}
+	return node.traces
+}
+
 // Sub returns the sub-graph at a tagged node, or nil if the tag
 // doesn't exist or the node isn't a Graph.
 //

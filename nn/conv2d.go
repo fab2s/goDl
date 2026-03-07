@@ -1,6 +1,7 @@
 package nn
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/fab2s/goDl/autograd"
@@ -61,6 +62,16 @@ func NewConv2d(inChannels, outChannels, kernelSize int64, opts ...tensor.Option)
 		Dilation: [2]int64{1, 1},
 		Groups:   1,
 	}, nil
+}
+
+// MustConv2d creates a Conv2d, panicking on error.
+// Use in model construction where dimensions are known constants.
+func MustConv2d(inChannels, outChannels, kernelSize int64, opts ...tensor.Option) *Conv2d {
+	c, err := NewConv2d(inChannels, outChannels, kernelSize, opts...)
+	if err != nil {
+		panic(fmt.Sprintf("nn.MustConv2d(%d, %d, %d): %v", inChannels, outChannels, kernelSize, err))
+	}
+	return c
 }
 
 // Forward applies the convolution.

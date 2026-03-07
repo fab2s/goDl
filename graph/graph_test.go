@@ -695,6 +695,99 @@ func TestLoopParameters(t *testing.T) {
 	t.Logf("Loop parameters: %d (body counted once despite %d iterations)", len(params), 3)
 }
 
+// --- Resettable / Traced tests ---
+
+// tracedCounter is a minimal loop body that implements both Resettable and Traced.
+// It increments a counter each iteration and traces the counter value.
+type tracedCounter struct {
+	count     int64
+	resetCt   int
+	lastBatch int64
+}
+
+func (c *tracedCounter) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	c.count++
+	return inputs[0] // pass through
+}
+func (c *tracedCounter) Parameters() []*nn.Parameter { return nil }
+func (c *tracedCounter) Reset(batchSize int64) {
+	c.count = 0
+	c.resetCt++
+	c.lastBatch = batchSize
+}
+func (c *tracedCounter) Trace() *autograd.Variable {
+	t, _ := tensor.FromFloat32([]float32{float32(c.count)}, []int64{1, 1})
+	return autograd.NewVariable(t, false)
+}
+
+func TestLoopTraced(t *testing.T) {
+	body := &tracedCounter{}
+
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	g, err := From(entry).Loop(body).For(3).Tag("loop").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	g.Forward(autograd.NewVariable(x, false))
+
+	// Auto-reset should have been called.
+	if body.resetCt != 1 {
+		t.Errorf("expected 1 reset, got %d", body.resetCt)
+	}
+	if body.lastBatch != 1 {
+		t.Errorf("expected batch size 1, got %d", body.lastBatch)
+	}
+
+	// Traces: initial (0) + 3 iterations (1, 2, 3) = 4 entries.
+	traces := g.Traces("loop")
+	if len(traces) != 4 {
+		t.Fatalf("expected 4 traces, got %d", len(traces))
+	}
+
+	for i, tr := range traces {
+		vals := allF32(tr)
+		expected := float32(i)
+		if !approxEqual(vals[0], expected, 1e-6) {
+			t.Errorf("trace[%d]: got %v, want %v", i, vals[0], expected)
+		}
+	}
+	t.Logf("Traced loop: %d traces collected (initial + 3 iterations)", len(traces))
+
+	// Second forward should auto-reset and produce fresh traces.
+	g.Forward(autograd.NewVariable(x, false))
+	if body.resetCt != 2 {
+		t.Errorf("expected 2 resets after second forward, got %d", body.resetCt)
+	}
+	traces2 := g.Traces("loop")
+	if len(traces2) != 4 {
+		t.Errorf("expected 4 traces on second forward, got %d", len(traces2))
+	}
+}
+
+func TestLoopTracedNil(t *testing.T) {
+	// Non-Traced body: Traces should return nil.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+	body, _ := nn.NewLinear(2, 2)
+	setLinearWeights(body, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	g, err := From(entry).Loop(body).For(2).Tag("loop").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	g.Forward(autograd.NewVariable(x, false))
+
+	if traces := g.Traces("loop"); traces != nil {
+		t.Errorf("expected nil traces for non-Traced body, got %d entries", len(traces))
+	}
+}
+
 // --- Tag / Using tests ---
 
 func TestTag(t *testing.T) {

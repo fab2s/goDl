@@ -123,7 +123,7 @@ runnable version with data generation and evaluation.
 |-------|-------------|
 | **Tensor** | Immutable, chainable API with error propagation. CPU and CUDA. |
 | **Autograd** | Reverse-mode automatic differentiation. Full backward for every op. |
-| **NN Modules** | `Linear`, `Conv2d`, `LayerNorm`, `BatchNorm`, `Dropout`, `Embedding`, `GRUCell`, `LSTMCell` |
+| **NN Modules** | `Linear`, `Conv2d`, `ConvTranspose2d`, `LayerNorm`, `BatchNorm`, `Dropout`, `Embedding`, `GRUCell`, `LSTMCell` |
 | **Activations** | `ReLU`, `Sigmoid`, `Tanh`, `GELU`, `SiLU`, `Softmax` |
 | **Losses** | `MSELoss`, `CrossEntropyLoss` |
 | **Optimizers** | `SGD` (with momentum), `Adam`, `AdamW` |
@@ -164,6 +164,22 @@ runnable version with data generation and evaluation.
 | `nn.GradScaler` | Dynamic loss scaling for mixed precision (float16) training |
 | `nn.CastParameters` | Cast model parameters to any dtype (`Float16`, `BFloat16`, etc.) |
 
+### Module Interfaces
+
+Beyond `Module` and `TrainToggler`, modules can implement optional
+interfaces that the graph recognizes automatically:
+
+| Interface | Method | What happens |
+|-----------|--------|-------------|
+| `Resettable` | `Reset(batchSize int64)` | Graph auto-calls before each Forward — modules with per-forward state (attention location, counter, accumulator) reset cleanly without manual setup |
+| `Traced` | `Trace() *Variable` | Loop executor collects return value before first iteration and after each step — `g.Traces(tag)` returns the full trajectory |
+| `NamedInputModule` | `ForwardNamed(stream, refs)` | Loop and node Using refs arrive as a named map instead of positional args |
+| `RefValidator` | `RefNames() []string` | Build-time validation that exactly the expected Using refs are wired |
+
+These compose: a loop body that implements `Resettable` + `Traced` +
+`NamedInputModule` gets auto-reset, per-iteration trace collection, and
+named ref forwarding — all handled by the graph, no manual wiring.
+
 ### Observation & Trends
 
 Tags double as observation points — collect metrics during training, flush
@@ -189,6 +205,7 @@ for epoch := range epochs {
 | Method | What it does |
 |--------|-------------|
 | `g.Tagged(tag)` | Access a tagged node's output after Forward |
+| `g.Traces(tag)` | Access per-iteration side outputs from `Traced` loop bodies |
 | `g.Log(tags...)` | Print current tagged values (hookable via `OnLog`) |
 | `g.Collect(tags...)` / `g.Flush(tags...)` | Batch → epoch metric collection |
 | `g.Trend(tag)` | Epoch-level trend: `Slope`, `Stalled`, `Improving`, `Converged` |

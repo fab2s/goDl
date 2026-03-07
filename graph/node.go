@@ -20,8 +20,9 @@ type Node struct {
 	outputPorts []string
 	run         nodeFunc
 	params      func() []*nn.Parameter
-	module      nn.Module // nil for internal nodes (add, gated_merge, state_read)
-	refTarget   nn.Module // module receiving Using refs; nil means module field
+	module      nn.Module            // nil for internal nodes (add, gated_merge, state_read)
+	refTarget   nn.Module            // module receiving Using refs; nil means module field
+	traces      []*autograd.Variable // per-iteration side outputs from Traced loop bodies
 }
 
 // wrapModule adapts an nn.Module to the graph engine's internal contract.

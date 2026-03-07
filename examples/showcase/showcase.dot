@@ -9,8 +9,8 @@ digraph G {
     label="level 0";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "Linear_0" [label="Linear\n[24 params]\n#input" shape=invhouse fillcolor="#aed6f1"];
     "state_read_memory_21" [label="state_read_memory" shape=diamond fillcolor="#f9e79f"];
+    "Linear_0" [label="Linear\n[24 params]\n#input" shape=invhouse fillcolor="#aed6f1"];
   }
 
   subgraph cluster_level_1 {
@@ -31,8 +31,8 @@ digraph G {
     label="level 3";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "Graph_4" [label="Graph (sub)\n[88 params]" shape=box fillcolor="#d6eaf8"];
     "Graph_3" [label="Graph (sub)\n[88 params]" shape=box fillcolor="#d6eaf8"];
+    "Graph_4" [label="Graph (sub)\n[88 params]" shape=box fillcolor="#d6eaf8"];
   }
 
   subgraph cluster_level_4 {
@@ -109,9 +109,9 @@ digraph G {
     label="level 14";
     style=dashed; color="#999999"; fontcolor="#999999";
     rank=same;
-    "Linear_17" [label="Linear\n[72 params]" shape=box fillcolor="#eaecee"];
-    "Linear_16" [label="Linear\n[72 params]" shape=box fillcolor="#eaecee"];
     "softmaxRouter_15" [label="softmaxRouter\n[18 params]" shape=box fillcolor="#eaecee"];
+    "Linear_16" [label="Linear\n[72 params]" shape=box fillcolor="#eaecee"];
+    "Linear_17" [label="Linear\n[72 params]" shape=box fillcolor="#eaecee"];
   }
 
   subgraph cluster_level_15 {

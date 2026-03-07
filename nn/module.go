@@ -80,6 +80,43 @@ func SetTraining(m Module, training bool) {
 	}
 }
 
+// Resettable is implemented by modules with per-forward mutable state
+// that must be reinitialized before each forward pass.
+//
+// When a graph contains Resettable modules, [Graph.Forward] automatically
+// calls Reset on each one before execution, passing the batch size
+// inferred from the first input tensor.
+//
+//	type AttentionStep struct { location *autograd.Variable }
+//
+//	func (s *AttentionStep) Reset(batchSize int64) {
+//	    s.location = zeros(batchSize, 2)  // reinitialize state
+//	}
+type Resettable interface {
+	Reset(batchSize int64)
+}
+
+// Reset calls Reset on a module if it implements [Resettable].
+func Reset(m Module, batchSize int64) {
+	if r, ok := m.(Resettable); ok {
+		r.Reset(batchSize)
+	}
+}
+
+// Traced is implemented by loop body modules that produce per-iteration
+// side outputs. The loop executor calls Trace after each iteration to
+// collect the trajectory, which is accessible via [Graph.Traces].
+//
+// The loop also calls Trace once before the first iteration (after
+// Reset, if the body is [Resettable]) to capture the initial state.
+//
+//	func (s *AttentionStep) Trace() *autograd.Variable {
+//	    return s.location  // current fixation point
+//	}
+type Traced interface {
+	Trace() *autograd.Variable
+}
+
 // Parameter is a variable that requires gradients — a learnable weight.
 type Parameter struct {
 	*autograd.Variable

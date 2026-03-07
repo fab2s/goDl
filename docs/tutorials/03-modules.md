@@ -166,6 +166,53 @@ nn.SetTraining(dropout, true)    // back to training
 
 When using the graph builder, `Graph.SetTraining(bool)` propagates to all nodes recursively.
 
+## Optional Module Interfaces
+
+Beyond `Module` and `TrainToggler`, modules can implement additional
+interfaces that the graph recognizes automatically:
+
+**Resettable** — for modules with per-forward mutable state (attention
+location, internal counter, accumulator). The graph calls `Reset`
+before each Forward, passing the batch size from the input:
+
+```go
+type Resettable interface {
+    Reset(batchSize int64)
+}
+```
+
+**Traced** — for loop body modules that produce per-iteration side
+outputs. The loop executor calls `Trace()` to collect a trajectory,
+accessible via `g.Traces(tag)` after Forward:
+
+```go
+type Traced interface {
+    Trace() *autograd.Variable
+}
+```
+
+**NamedInputModule** — for modules that receive `Using` references as
+a named map instead of positional arguments:
+
+```go
+type NamedInputModule interface {
+    ForwardNamed(stream *autograd.Variable, refs map[string]*autograd.Variable) *autograd.Variable
+}
+```
+
+**RefValidator** — declares expected Using refs for build-time
+validation:
+
+```go
+type RefValidator interface {
+    RefNames() []string
+}
+```
+
+All interfaces are opt-in. Modules that don't implement them work
+normally. See [Advanced Graphs](06-advanced-graphs.md) for detailed
+usage with loops and the graph builder.
+
 ## Composing Modules Manually
 
 Without the graph builder, you compose modules in plain Go:
