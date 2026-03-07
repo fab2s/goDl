@@ -10,6 +10,10 @@ Same GPU kernels as PyTorch. No Python. No GIL. Just Go.
 </p>
 
 <p align="center">
+  <a href="https://github.com/fab2s/goDl/actions/workflows/ci.yml"><img src="https://github.com/fab2s/goDl/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
+<p align="center">
   <a href="#the-graph-builder">Graph Builder</a> &bull;
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#features">Features</a> &bull;
