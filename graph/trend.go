@@ -161,3 +161,106 @@ func (t *Trend) tail(n int) []float64 {
 	}
 	return t.values[len(t.values)-n:]
 }
+
+// TrendGroup is a collection of Trends for group queries.
+// Obtained via [Graph.Trends] or [Graph.TimingTrends], which expand
+// tag groups registered with [FlowBuilder.TagGroup].
+//
+//	if g.Trends("head").AllImproving(5) {
+//	    fmt.Println("all heads improving")
+//	}
+type TrendGroup []*Trend
+
+// AllImproving returns true if every trend in the group is improving.
+// Returns false for empty groups.
+func (tg TrendGroup) AllImproving(window int) bool {
+	if len(tg) == 0 {
+		return false
+	}
+	for _, t := range tg {
+		if !t.Improving(window) {
+			return false
+		}
+	}
+	return true
+}
+
+// AnyImproving returns true if at least one trend in the group is improving.
+func (tg TrendGroup) AnyImproving(window int) bool {
+	for _, t := range tg {
+		if t.Improving(window) {
+			return true
+		}
+	}
+	return false
+}
+
+// AllStalled returns true if every trend in the group is stalled.
+// Returns false for empty groups.
+func (tg TrendGroup) AllStalled(window int, tol float64) bool {
+	if len(tg) == 0 {
+		return false
+	}
+	for _, t := range tg {
+		if !t.Stalled(window, tol) {
+			return false
+		}
+	}
+	return true
+}
+
+// AnyStalled returns true if at least one trend in the group is stalled.
+func (tg TrendGroup) AnyStalled(window int, tol float64) bool {
+	for _, t := range tg {
+		if t.Stalled(window, tol) {
+			return true
+		}
+	}
+	return false
+}
+
+// AllConverged returns true if every trend in the group has converged.
+// Returns false for empty groups.
+func (tg TrendGroup) AllConverged(window int, tol float64) bool {
+	if len(tg) == 0 {
+		return false
+	}
+	for _, t := range tg {
+		if !t.Converged(window, tol) {
+			return false
+		}
+	}
+	return true
+}
+
+// AnyConverged returns true if at least one trend in the group has converged.
+func (tg TrendGroup) AnyConverged(window int, tol float64) bool {
+	for _, t := range tg {
+		if t.Converged(window, tol) {
+			return true
+		}
+	}
+	return false
+}
+
+// MeanSlope returns the average slope across all trends in the group.
+// Returns 0 for empty groups.
+func (tg TrendGroup) MeanSlope(window int) float64 {
+	if len(tg) == 0 {
+		return 0
+	}
+	sum := 0.0
+	for _, t := range tg {
+		sum += t.Slope(window)
+	}
+	return sum / float64(len(tg))
+}
+
+// Slopes returns the slope of each trend in the group.
+func (tg TrendGroup) Slopes(window int) []float64 {
+	slopes := make([]float64, len(tg))
+	for i, t := range tg {
+		slopes[i] = t.Slope(window)
+	}
+	return slopes
+}

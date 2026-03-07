@@ -337,6 +337,64 @@ for epoch := range maxEpochs {
 }
 ```
 
+## Tag Groups and Trend Groups
+
+When you have parallel branches from `Split`, `TagGroup` names them
+all at once with auto-suffixed tags. `Trends` expands groups for
+aggregate queries — useful for multi-head architectures:
+
+```go
+// Build a multi-head model.
+g, _ := graph.From(encoder).
+    Split(headA, headB, headC).TagGroup("head").
+    Merge(graph.Mean()).
+    Through(outputHead).Tag("loss").
+    Build()
+
+// Training loop with group observation.
+for epoch := range maxEpochs {
+    for loader.Next() {
+        input, target := loader.Batch()
+        pred := g.Forward(autograd.NewVariable(input, true))
+        loss := nn.MSELoss(pred, autograd.NewVariable(target, false))
+        optimizer.ZeroGrad()
+        loss.Backward()
+        optimizer.Step()
+
+        g.Collect("loss", "head_0", "head_1", "head_2")
+    }
+    g.Flush()
+
+    // Group queries expand "head" → head_0, head_1, head_2.
+    if g.Trends("head").AllImproving(5) {
+        fmt.Println("all heads improving")
+    }
+    if g.Trends("head").AnyStalled(5, 1e-4) {
+        scheduler.Decay()
+    }
+    // Per-trend slopes for custom logic.
+    slopes := g.Trends("head").Slopes(5)
+    fmt.Printf("head slopes: %v\n", slopes)
+}
+```
+
+`TrendGroup` methods mirror single-`Trend` queries:
+- `AllImproving(w)` / `AnyImproving(w)` — slope direction
+- `AllStalled(w, tol)` / `AnyStalled(w, tol)` — slope near zero
+- `AllConverged(w, tol)` / `AnyConverged(w, tol)` — variance below tolerance
+- `MeanSlope(w)` — average slope across the group
+- `Slopes(w)` — individual slopes as `[]float64`
+
+Timing trends work the same way via `g.TimingTrends("head")`:
+
+```go
+g.EnableProfiling()
+// ... training ...
+if g.TimingTrends("head").MeanSlope(5) > 0.001 {
+    fmt.Println("heads getting slower — possible memory issue")
+}
+```
+
 ## Complete Example: Learning Cumulative Sum
 
 This example trains a small graph to learn cumulative sum: given `[a, b]`, predict `[a, a+b]`. It is adapted directly from `examples/train/train_test.go`.

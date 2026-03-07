@@ -29,6 +29,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/fab2s/goDl/autograd"
 	"github.com/fab2s/goDl/nn"
@@ -83,17 +84,26 @@ type stateEntry struct {
 type Graph struct {
 	nodes     map[string]*Node
 	edges     []*Edge
-	inputs    []exposedPort      // graph-level inputs → node input ports
-	outputs   []exposedPort      // graph-level outputs → node output ports
-	order     []*Node            // flat topological order (for Parameters)
-	levels    [][]*Node          // grouped by execution level (for parallel Forward)
-	edgesFrom map[string][]*Edge // edges grouped by source node for fast routing
-	state     []*stateEntry      // forward-reference state buffers
-	tags      map[string]string  // tag name → node ID (for visualization)
-	frozen    map[string]bool    // frozen tag names (for parameter freezing)
+	inputs    []exposedPort       // graph-level inputs → node input ports
+	outputs   []exposedPort       // graph-level outputs → node output ports
+	order     []*Node             // flat topological order (for Parameters)
+	levels    [][]*Node           // grouped by execution level (for parallel Forward)
+	edgesFrom map[string][]*Edge  // edges grouped by source node for fast routing
+	state     []*stateEntry       // forward-reference state buffers
+	tags      map[string]string   // tag name → node ID (for visualization)
+	tagGroups map[string][]string // group name → suffixed tag names (from TagGroup)
+	frozen    map[string]bool     // frozen tag names (for parameter freezing)
 
 	// Context — see ForwardCtx.
 	execCtx *execCtx // shared with loop/map closures for cancellation
+
+	// Profiling — see profile.go.
+	// When profiling is false (the default), no time.Now() calls are made.
+	profiling     bool
+	lastProfile   *Profile
+	profileFunc   func(*Profile)       // OnProfile hook
+	timingBuffer  map[string][]float64 // CollectTimings batch buffer (seconds)
+	timingHistory map[string][]float64 // FlushTimings epoch history (seconds)
 
 	// Observation — see observe.go.
 	// tagsByNode and taggedOutputs are initialized at Build time and
@@ -129,6 +139,15 @@ func (g *Graph) ForwardCtx(ctx context.Context, inputs ...*autograd.Variable) *a
 	g.execCtx.ctx = ctx
 	defer func() { g.execCtx.ctx = context.Background() }()
 
+	var forwardStart time.Time
+	if g.profiling {
+		forwardStart = time.Now()
+		g.lastProfile = &Profile{
+			Levels: make([]LevelTiming, 0, len(g.levels)),
+			Nodes:  make([]NodeTiming, 0, len(g.order)),
+		}
+	}
+
 	if len(inputs) != len(g.inputs) {
 		return autograd.ErrVariable(fmt.Errorf(
 			"graph: expected %d inputs, got %d", len(g.inputs), len(inputs)))
@@ -154,12 +173,19 @@ func (g *Graph) ForwardCtx(ctx context.Context, inputs ...*autograd.Variable) *a
 
 	// Execute level by level. Within a level, nodes are independent.
 	nodeOutputs := make(map[string][]*autograd.Variable, len(g.nodes))
-	for _, level := range g.levels {
+	for i, level := range g.levels {
 		if err := ctx.Err(); err != nil {
 			return autograd.ErrVariable(err)
 		}
-		if err := g.executeLevel(level, slots, nodeOutputs); err != nil {
+		if err := g.executeLevel(i, level, slots, nodeOutputs); err != nil {
 			return autograd.ErrVariable(err)
+		}
+	}
+
+	if g.profiling {
+		g.lastProfile.Total = time.Since(forwardStart)
+		if g.profileFunc != nil {
+			g.profileFunc(g.lastProfile)
 		}
 	}
 
@@ -174,25 +200,52 @@ func (g *Graph) ForwardCtx(ctx context.Context, inputs ...*autograd.Variable) *a
 // Single-node levels execute directly (no goroutine overhead).
 // Multi-node levels execute concurrently via goroutines.
 func (g *Graph) executeLevel(
+	levelIdx int,
 	level []*Node,
 	slots map[string][]*autograd.Variable,
 	nodeOutputs map[string][]*autograd.Variable,
 ) error {
+	var levelStart time.Time
+	if g.profiling {
+		levelStart = time.Now()
+	}
+
 	if len(level) == 1 {
-		return g.executeAndRoute(level[0], slots, nodeOutputs)
+		err := g.executeAndRoute(level[0], levelIdx, slots, nodeOutputs)
+		if g.profiling {
+			elapsed := time.Since(levelStart)
+			g.lastProfile.Levels = append(g.lastProfile.Levels, LevelTiming{
+				Index:     levelIdx,
+				WallClock: elapsed,
+				SumNodes:  elapsed,
+				NumNodes:  1,
+			})
+		}
+		return err
 	}
 
 	// Parallel execution: each goroutine writes to its own index.
 	results := make([][]*autograd.Variable, len(level))
 	errs := make([]error, len(level))
+	var nodeTimes []time.Duration
+	if g.profiling {
+		nodeTimes = make([]time.Duration, len(level))
+	}
 
 	var wg sync.WaitGroup
 	for i, node := range level {
 		wg.Add(1)
 		go func(idx int, n *Node) {
 			defer wg.Done()
+			var start time.Time
+			if g.profiling {
+				start = time.Now()
+			}
 			zeroFillNilInputs(slots[n.id])
 			outs, err := n.run(slots[n.id])
+			if g.profiling {
+				nodeTimes[idx] = time.Since(start)
+			}
 			if err != nil {
 				errs[idx] = fmt.Errorf("graph: node %q: %w", n.id, err)
 				return
@@ -202,7 +255,8 @@ func (g *Graph) executeLevel(
 	}
 	wg.Wait()
 
-	// Check errors and route outputs (sequential after all goroutines complete).
+	// Check errors, route outputs, and record per-node timings.
+	var sumNodes time.Duration
 	for i, node := range level {
 		if errs[i] != nil {
 			return errs[i]
@@ -211,7 +265,26 @@ func (g *Graph) executeLevel(
 		g.routeOutputs(node, results[i], slots)
 		g.captureState(node, results[i])
 		g.captureTagged(node, results[i])
+		if g.profiling {
+			sumNodes += nodeTimes[i]
+			g.lastProfile.Nodes = append(g.lastProfile.Nodes, NodeTiming{
+				ID:       node.id,
+				Tag:      g.tagsByNode[node.id],
+				Duration: nodeTimes[i],
+				Level:    levelIdx,
+			})
+		}
 	}
+
+	if g.profiling {
+		g.lastProfile.Levels = append(g.lastProfile.Levels, LevelTiming{
+			Index:     levelIdx,
+			WallClock: time.Since(levelStart),
+			SumNodes:  sumNodes,
+			NumNodes:  len(level),
+		})
+	}
+
 	return nil
 }
 
@@ -232,11 +305,27 @@ func zeroFillNilInputs(inputs []*autograd.Variable) {
 // executeAndRoute runs a single node and routes its outputs downstream.
 func (g *Graph) executeAndRoute(
 	node *Node,
+	levelIdx int,
 	slots map[string][]*autograd.Variable,
 	nodeOutputs map[string][]*autograd.Variable,
 ) error {
+	var start time.Time
+	if g.profiling {
+		start = time.Now()
+	}
+
 	zeroFillNilInputs(slots[node.id])
 	outs, err := node.run(slots[node.id])
+
+	if g.profiling {
+		g.lastProfile.Nodes = append(g.lastProfile.Nodes, NodeTiming{
+			ID:       node.id,
+			Tag:      g.tagsByNode[node.id],
+			Duration: time.Since(start),
+			Level:    levelIdx,
+		})
+	}
+
 	if err != nil {
 		return fmt.Errorf("graph: node %q: %w", node.id, err)
 	}
@@ -367,6 +456,32 @@ func (g *Graph) ZeroFrozenGrads() {
 	}
 }
 
+// expandGroups expands tag group names into their member tags.
+// Non-group tags pass through unchanged.
+func (g *Graph) expandGroups(tags []string) []string {
+	if g.tagGroups == nil {
+		return tags
+	}
+	var expanded []string
+	for _, tag := range tags {
+		if members, ok := g.tagGroups[tag]; ok {
+			expanded = append(expanded, members...)
+		} else {
+			expanded = append(expanded, tag)
+		}
+	}
+	return expanded
+}
+
+// TagGroup returns the member tags of a tag group, or nil if the
+// group name is not registered.
+func (g *Graph) TagGroup(name string) []string {
+	if g.tagGroups == nil {
+		return nil
+	}
+	return g.tagGroups[name]
+}
+
 // ResetState clears all forward-reference state buffers to nil.
 // Call this when starting inference on a new sequence.
 func (g *Graph) ResetState() {
@@ -450,7 +565,7 @@ func topologicalLevels(nodes map[string]*Node, edges []*Edge) ([][]*Node, error)
 }
 
 // buildGraph validates and finalizes a graph from its components.
-func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposedPort, fwdRefs []forwardRef, tags map[string]string, ec *execCtx) (*Graph, error) {
+func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposedPort, fwdRefs []forwardRef, tags map[string]string, tagGroups map[string][]string, ec *execCtx) (*Graph, error) {
 	// Validate edges reference valid nodes and ports.
 	for _, edge := range edges {
 		fromNode, ok := nodes[edge.fromNode]
@@ -554,6 +669,7 @@ func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposed
 		edgesFrom:     edgesFrom,
 		state:         state,
 		tags:          tags,
+		tagGroups:     tagGroups,
 		execCtx:       ec,
 		tagsByNode:    tagsByNode,
 		taggedOutputs: make(map[string]*autograd.Variable, len(tags)),

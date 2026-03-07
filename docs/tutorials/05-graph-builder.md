@@ -97,6 +97,30 @@ Tags are used by `Using`, `Gate`, `Switch`, and `Map.Over` to access
 values from earlier in the graph. See
 [Advanced Graphs](06-advanced-graphs.md) for the full story.
 
+## Naming parallel branches with TagGroup
+
+When you have parallel branches from `Split`, `TagGroup` names them all
+at once with auto-suffixed tags:
+
+```go
+g, _ := graph.From(nn.MustLinear(4, 8)).
+    Split(headA, headB, headC).TagGroup("head").
+    Merge(graph.Mean()).
+    Build()
+// Creates tags: "head_0", "head_1", "head_2"
+// Group "head" → ["head_0", "head_1", "head_2"]
+```
+
+The suffixed tags work with all existing APIs — `Tagged`, `Collect`,
+`Timing`, `ParametersByTag`, `Freeze`/`Unfreeze`. Additionally,
+`g.Trends("head")` expands the group and returns a `TrendGroup` for
+aggregate queries like `AllImproving` and `MeanSlope`. See
+[Training](04-training.md) for trend-driven training patterns.
+
+`TagGroup` requires multiple streams (after `Split`). For single-stream
+tagging, use `Tag` instead — the builder reports a clear error if you
+mix them up.
+
 ## Per-element processing with Map
 
 `Map` applies a module to each element along dimension 0:

@@ -276,7 +276,7 @@ outer, _ := From(inner).Through(l2).Build()  // inner graph is a node
 - **RefValidator**: build-time validation of Using ref contracts.
 - **Graph primitives**: `StateAdd`, `SoftmaxRouter`, `SigmoidRouter`, `Reshape`.
 - **Documentation**: 8 progressive tutorials, design docs, complete examples.
-- **Test coverage**: 315 tests including numerical gradient checks (autograd ops,
+- **Test coverage**: 351 tests including numerical gradient checks (autograd ops,
   all NN modules, exact optimizer step verification), all passing with race detector.
 
 ### Remaining
@@ -335,6 +335,36 @@ partial cancellation.
 Genuinely novel — PyTorch has no equivalent because Python's threading model
 doesn't support cooperative cancellation inside a forward pass.
 
+### Profiling ✅
+
+Opt-in per-node and per-level execution timing. Zero overhead when
+disabled (bool gate before `time.Now()` calls).
+
+- `EnableProfiling()` / `DisableProfiling()` / `Profile()` / `Timing(tag)`
+- `LevelTiming.Parallelism()` — SumNodes/WallClock ratio for parallel efficiency
+- `OnProfile(fn)` — hook called after each Forward
+- Timing trends: `CollectTimings(tags...)`, `FlushTimings()`, `TimingTrend(tag)`
+  — mirrors the value observation pipeline, reuses `*Trend` type
+- 14 tests covering all profiling paths
+
+### TagGroup & TrendGroup ✅
+
+`TagGroup` names parallel branches with auto-suffixed tags. `TrendGroup`
+provides aggregate queries over multiple trends.
+
+- `Split(...).TagGroup("head")` → creates `"head_0"`, `"head_1"`, etc.
+- Group registered as `tagGroups map[string][]string` on Graph
+- Build-time validation: duplicate group name, suffix collision with existing Tag,
+  TagGroup on single stream (guides user to Tag instead)
+- `TrendGroup []*Trend` — pure query layer, zero storage
+- `g.Trends(tags...)` / `g.TimingTrends(tags...)` expand groups, return TrendGroup
+- All/Any variants: `AllImproving`, `AnyImproving`, `AllStalled`, `AnyStalled`,
+  `AllConverged`, `AnyConverged`
+- Aggregates: `MeanSlope`, `Slopes` ([]float64 for custom logic)
+- Suffixed tags work with all existing APIs: Tagged, Collect, Timing,
+  ParametersByTag, Freeze/Unfreeze
+- 22 tests (10 TagGroup + 12 TrendGroup)
+
 ### Early Exit
 
 Models that can skip remaining layers when confidence is high. Different from
@@ -364,6 +394,70 @@ ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 Combined with the existing checkpoint system, a `TrainLoop` utility could
 handle signals + periodic auto-save. Mostly a training loop concern rather
 than a graph concern.
+
+---
+
+## Phase 5c: Numerical Robustness & Higher-Order Gradients
+
+Deep loops, long chains, and advanced loss functions push autograd beyond
+simple first-order backward. This phase hardens the training stack for
+production-grade stability.
+
+### Loop stability
+
+These are loop-scoped — they extend the existing `Loop` builder without
+touching the core autograd engine.
+
+**Gradient checkpointing** — don't store forward intermediates for every
+loop iteration; recompute forward during backward. Trades compute for
+memory. Critical for `Loop.For(100+)`:
+
+```go
+Loop(body).For(100).Checkpoint()  // recompute forward in backward
+```
+
+**Truncated BPTT** — detach every K iterations within a single forward
+pass. Simple and high-impact for recurrent training:
+
+```go
+Loop(body).For(100).Truncate(10)  // detach gradients every 10 steps
+```
+
+**Per-iteration gradient monitoring** — extend the profiling/trend
+infrastructure to track gradient norms inside loops. Flag instability
+automatically via the observation layer.
+
+### Higher-order gradients
+
+Differentiate through the backward pass itself. Today `Backward()`
+consumes the graph; for higher-order grads, backward must build new
+Variable nodes that can be walked again.
+
+```go
+// First-order (existing)
+loss.Backward()
+
+// Higher-order: keep graph alive through backward
+grads := autograd.Grad(loss, inputs, autograd.CreateGraph(true))
+penalty := grads[0].Norm(2)  // differentiable gradient
+penalty.Backward()           // second-order backward
+```
+
+Unlocks:
+- **WGAN-GP** — gradient penalty requires differentiable `∇D(x)`
+- **MAML / meta-learning** — differentiate through inner optimization
+- **PINNs** — loss functions involving `∂net/∂x`
+- **Hessian-vector products** — second-order optimizers
+
+Implementation is incremental: start with ops needed for gradient
+penalties (Add, Mul, Matmul, norms), extend to full op coverage over time.
+
+### Custom losses
+
+Built on higher-order grads and numerical stability primitives. Common
+patterns that are easy to get wrong: Huber, focal, contrastive, triplet.
+The value is in correct log-sum-exp tricks, clamping, and gradient penalty
+integration.
 
 ---
 
@@ -450,6 +544,9 @@ Phase 3 (Layers & Optimizers) ✅   Phase 4 (Graph Engine) ✅
     └──────────┬─────────────────────────┘
                v
     Phase 5 (Training refinements) ✅ + Phase 5b (Interruption) 🔧
+               │
+               v
+    Phase 5c (Numerical robustness / higher-order grads)
                │
                v
     Phase 6 (FBRL port / benchmark)

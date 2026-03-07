@@ -75,7 +75,7 @@ Requirements: Docker (with NVIDIA Container Toolkit for GPU support).
 git clone https://github.com/fab2s/goDl.git
 cd goDl
 make image    # build dev container (Go + libtorch + CUDA)
-make test     # run all 315 tests (CPU + CUDA)
+make test     # run all 351 tests (CPU + CUDA)
 make test-cpu # run without GPU
 make doc      # local doc server (pkg.go.dev style)
 make shell    # interactive shell in container
@@ -147,6 +147,7 @@ runnable version with data generation and evaluation.
 | `Map(body).Over(tag)` | Iterate over a tagged tensor |
 | `Map(body).Slices(n)` | Decompose last dim into n slices, map, recompose |
 | `.Batched()` | Fast path for Map — full batch in one call |
+| `TagGroup(name)` | Name parallel branches: `Split(...).TagGroup("head")` → `"head_0"`, `"head_1"`, ... |
 | `g.ForwardCtx(ctx, inputs...)` | Context-aware execution — timeouts, cancellation for loops and maps |
 
 ### Training Tools
@@ -191,7 +192,37 @@ for epoch := range epochs {
 | `g.Log(tags...)` | Print current tagged values (hookable via `OnLog`) |
 | `g.Collect(tags...)` / `g.Flush(tags...)` | Batch → epoch metric collection |
 | `g.Trend(tag)` | Epoch-level trend: `Slope`, `Stalled`, `Improving`, `Converged` |
+| `g.Trends(tags...)` | Group trends: `AllImproving`, `AnyStalled`, `MeanSlope` (expands TagGroups) |
 | `g.Sub(tag)` | Reach into a sub-graph's metrics — no extra Forward needed |
+
+### Tag Groups & Trend Groups
+
+`TagGroup` names parallel branches from `Split` with auto-suffixed tags.
+`Trends` and `TimingTrends` expand groups for aggregate queries:
+
+```go
+g, _ := graph.From(encoder).
+    Split(headA, headB, headC).TagGroup("head").  // head_0, head_1, head_2
+    Merge(graph.Mean()).
+    Build()
+
+// Training loop with group observation.
+for epoch := range epochs {
+    for _, batch := range loader {
+        g.Forward(batch.Input)
+        g.Collect("head_0", "head_1", "head_2")
+    }
+    g.Flush()
+
+    if g.Trends("head").AllImproving(5) {
+        fmt.Println("all heads improving")
+    }
+    if g.Trends("head").AnyStalled(5, 1e-4) {
+        fmt.Println("at least one head stalled")
+    }
+    fmt.Printf("mean slope: %.4f\n", g.Trends("head").MeanSlope(5))
+}
+```
 
 ### Context-Aware Execution
 
@@ -232,7 +263,7 @@ Every differentiable path is verified against finite-difference gradients:
 - 32 autograd op-level checks (every op + compositions)
 - 10 module-level checks (every NN module, input + parameter gradients)
 - 11 exact optimizer step verifications (SGD, Adam, AdamW)
-- 315 tests total, all passing with race detector
+- 351 tests total, all passing with race detector
 
 ## Why Go for Deep Learning?
 

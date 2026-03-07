@@ -247,6 +247,22 @@ func (g *Graph) Trend(tag string) *Trend {
 	return NewTrend(g.epochHistory[tag])
 }
 
+// Trends returns a [TrendGroup] for the given tags, expanding any
+// tag group names registered with [FlowBuilder.TagGroup].
+//
+//	// With TagGroup("head") → ["head_0", "head_1", "head_2"]:
+//	if g.Trends("head").AllImproving(5) {
+//	    fmt.Println("all heads improving")
+//	}
+func (g *Graph) Trends(tags ...string) TrendGroup {
+	expanded := g.expandGroups(tags)
+	tg := make(TrendGroup, len(expanded))
+	for i, tag := range expanded {
+		tg[i] = g.Trend(tag)
+	}
+	return tg
+}
+
 // ResetTrend clears the epoch history for the specified tags.
 // If no tags are specified, all epoch history is cleared.
 func (g *Graph) ResetTrend(tags ...string) {

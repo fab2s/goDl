@@ -52,6 +52,7 @@ type FlowBuilder struct {
 	onTarget    *nodeRef                  // node that Using() wires to
 	pending     map[string][]pendingUsing // forward refs awaiting Tag
 	forwardRefs []forwardRef              // resolved forward refs
+	tagGroups   map[string][]string       // group name → suffixed tag names
 	counter     int
 	err         error
 	openBuilder string   // non-empty when a Loop/Map builder hasn't been finalized
@@ -291,6 +292,78 @@ func (fb *FlowBuilder) Tag(name string) *FlowBuilder {
 	return fb
 }
 
+// TagGroup names each stream in a multi-stream flow with auto-suffixed tags.
+// Given a group name, it creates tags "name_0", "name_1", etc. — one per
+// branch. The group is registered so that [Graph.Trends] and
+// [Graph.TimingTrends] can expand it automatically.
+//
+// TagGroup requires multiple streams (after Split). For single-stream
+// tagging, use [FlowBuilder.Tag] instead.
+//
+//	graph.From(encoder).
+//	    Split(headA, headB, headC).TagGroup("head").
+//	    Merge(graph.Mean()).
+//	    Build()
+//	// Creates tags: "head_0", "head_1", "head_2"
+//	// Group "head" → ["head_0", "head_1", "head_2"]
+func (fb *FlowBuilder) TagGroup(name string) *FlowBuilder {
+	if fb.err != nil {
+		return fb
+	}
+	if len(fb.current) < 2 {
+		fb.err = fmt.Errorf("graph: TagGroup(%q) requires multiple streams (got %d); use Tag for single-stream tagging", name, len(fb.current))
+		return fb
+	}
+	if fb.taps == nil {
+		fb.taps = make(map[string]*nodeRef)
+	}
+	if fb.tagGroups == nil {
+		fb.tagGroups = make(map[string][]string)
+	}
+
+	// Check for duplicate group name.
+	if _, exists := fb.tagGroups[name]; exists {
+		fb.err = fmt.Errorf("graph: duplicate tag group name %q", name)
+		return fb
+	}
+
+	// Check group name doesn't collide with existing Tag.
+	if _, exists := fb.taps[name]; exists {
+		fb.err = fmt.Errorf("graph: tag group name %q conflicts with existing Tag(%q); use a different group name", name, name)
+		return fb
+	}
+
+	suffixed := make([]string, len(fb.current))
+	for i, cur := range fb.current {
+		tag := fmt.Sprintf("%s_%d", name, i)
+
+		// Check suffix doesn't collide with existing Tag.
+		if _, exists := fb.taps[tag]; exists {
+			fb.err = fmt.Errorf("graph: TagGroup(%q): suffixed name %q conflicts with existing Tag(%q); use a different group name", name, tag, tag)
+			return fb
+		}
+
+		fb.taps[tag] = cur
+		suffixed[i] = tag
+
+		// Resolve any pending forward references to this suffixed tag.
+		if pending, ok := fb.pending[tag]; ok {
+			for _, p := range pending {
+				fb.forwardRefs = append(fb.forwardRefs, forwardRef{
+					name:       tag,
+					readerID:   p.readerID,
+					writerID:   cur.id,
+					writerPort: cur.outputPort,
+				})
+			}
+			delete(fb.pending, tag)
+		}
+	}
+
+	fb.tagGroups[name] = suffixed
+	return fb
+}
+
 // Using wires additional inputs from previously tagged points to the
 // preceding node(s). After Through, Gate, Merge, or Also, it targets
 // that single node. After Split, it targets all branch modules —
@@ -409,7 +482,7 @@ func (fb *FlowBuilder) Build() (*Graph, error) {
 		tags[name] = ref.id
 	}
 
-	return buildGraph(fb.nodes, fb.edges, fb.inputs, fb.outputs, fb.forwardRefs, tags, fb.execCtx)
+	return buildGraph(fb.nodes, fb.edges, fb.inputs, fb.outputs, fb.forwardRefs, tags, fb.tagGroups, fb.execCtx)
 }
 
 // --- internal helpers ---
