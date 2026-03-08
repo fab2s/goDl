@@ -1,4 +1,4 @@
-// Training visualization: HTML charts and CSV export for epoch trends.
+// Training visualization: HTML charts, CSV export, and text logs for epoch trends.
 //
 // PlotHTML generates a self-contained HTML file with interactive training
 // curves — no external dependencies, no npm, no CDN. Open in any browser.
@@ -8,6 +8,11 @@
 // ExportTrends writes epoch history to CSV for external analysis tools.
 //
 //	g.ExportTrends("metrics.csv", "loss", "accuracy")
+//
+// WriteLog writes a human-readable training log with per-epoch metrics,
+// timing, and ETA:
+//
+//	g.WriteLog("training.log", 100, "loss", "hit_rate")
 package graph
 
 import (
@@ -17,6 +22,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // PlotHTML generates a self-contained HTML file with training curves
@@ -109,6 +115,114 @@ func (g *Graph) ExportTimingTrends(path string, tags ...string) error {
 	}
 
 	return writeCSV(path, series)
+}
+
+// WriteLog writes a human-readable training log to a text file.
+// Each line shows one epoch with metric values, duration, and ETA.
+// Tag group names are expanded. If no tags are specified, all tags
+// with epoch history are included.
+//
+// totalEpochs is the expected total number of epochs (for ETA
+// calculation). If 0, ETA is omitted.
+//
+//	g.WriteLog("training.log", 100, "loss", "hit_rate", "lr")
+//
+// Output:
+//
+//	# goDl training log — 2026-03-08T10:30:00Z
+//	epoch   1  loss=0.5432  hit_rate=71.23%  lr=0.001000  [1.2s  ETA 1m58s]
+//	epoch   2  loss=0.4321  hit_rate=78.56%  lr=0.001000  [1.1s  ETA 1m47s]
+func (g *Graph) WriteLog(path string, totalEpochs int, tags ...string) error {
+	series := g.gatherSeries(tags)
+	if len(series) == 0 {
+		return fmt.Errorf("graph: no epoch data to log (call Flush first)")
+	}
+
+	var b strings.Builder
+
+	// Header.
+	startTime := time.Now()
+	if len(g.flushTimes) > 0 {
+		startTime = g.flushTimes[0]
+	}
+	fmt.Fprintf(&b, "# goDl training log — %s\n", startTime.Format(time.RFC3339))
+
+	// Find max epoch count.
+	maxLen := 0
+	for _, s := range series {
+		if len(s.Values) > maxLen {
+			maxLen = len(s.Values)
+		}
+	}
+
+	// Epoch lines.
+	for i := range maxLen {
+		fmt.Fprintf(&b, "epoch %3d", i+1)
+		for _, s := range series {
+			if i < len(s.Values) {
+				fmt.Fprintf(&b, "  %s=%s", s.Name, formatMetric(s.Values[i]))
+			}
+		}
+		// Per-epoch duration.
+		if i < len(g.flushTimes) {
+			var dur time.Duration
+			if i == 0 {
+				dur = g.flushTimes[0].Sub(g.flushStart)
+			} else {
+				dur = g.flushTimes[i].Sub(g.flushTimes[i-1])
+			}
+			if dur > 0 {
+				b.WriteString("  [")
+				b.WriteString(FormatDuration(dur))
+				// ETA.
+				if totalEpochs > 0 && i > 0 {
+					elapsed := g.flushTimes[i].Sub(g.flushStart)
+					perEpoch := elapsed / time.Duration(i)
+					remaining := perEpoch * time.Duration(totalEpochs-i-1)
+					if remaining > 0 {
+						fmt.Fprintf(&b, "  ETA %s", FormatDuration(remaining))
+					}
+				}
+				b.WriteByte(']')
+			}
+		}
+		b.WriteByte('\n')
+	}
+
+	p := filepath.Clean(path)
+	return os.WriteFile(p, []byte(b.String()), 0600)
+}
+
+// FormatDuration formats a duration for training logs:
+// <1s → "42ms", <1m → "1.2s", ≥1m → "2m05s".
+func FormatDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
+}
+
+// formatMetric formats a scalar value for log display.
+func formatMetric(v float64) string {
+	abs := v
+	if abs < 0 {
+		abs = -abs
+	}
+	switch {
+	case abs == 0:
+		return "0"
+	case abs < 0.001:
+		return fmt.Sprintf("%.2e", v)
+	case abs < 1:
+		return fmt.Sprintf("%.4f", v)
+	case abs < 100:
+		return fmt.Sprintf("%.4f", v)
+	default:
+		return fmt.Sprintf("%.2f", v)
+	}
 }
 
 // plotSeries holds the data for one line in a chart.

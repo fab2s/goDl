@@ -78,6 +78,25 @@ func TestTrendLast(t *testing.T) {
 	}
 }
 
+func TestTrendLatest(t *testing.T) {
+	tr := NewTrend([]float64{1, 2, 3, 4, 5})
+	if tr.Latest() != 5 {
+		t.Errorf("Latest: got %f, want 5", tr.Latest())
+	}
+
+	// Empty trend → 0.
+	empty := NewTrend(nil)
+	if empty.Latest() != 0 {
+		t.Errorf("Latest on empty: got %f, want 0", empty.Latest())
+	}
+
+	// Single value.
+	single := NewTrend([]float64{42})
+	if single.Latest() != 42 {
+		t.Errorf("Latest on single: got %f, want 42", single.Latest())
+	}
+}
+
 func TestTrendSlopeDecreasing(t *testing.T) {
 	// Perfectly linear decrease: 5, 4, 3, 2, 1
 	tr := NewTrend([]float64{5, 4, 3, 2, 1})

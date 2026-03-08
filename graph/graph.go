@@ -116,6 +116,11 @@ type Graph struct {
 	epochHistory  map[string][]float64                // epoch means (populated by Flush)
 	logFunc       func(map[string]*autograd.Variable) // Log hook
 	flushFunc     func(map[string]float64)            // Flush hook
+
+	// Flush timing — see observe.go ETA/Elapsed/FlushCount.
+	flushCount  int         // number of Flush calls
+	flushStart  time.Time   // timestamp of first Flush
+	flushTimes  []time.Time // timestamp of each Flush
 }
 
 // Forward executes the graph, routing variables along edges between nodes.

@@ -5,6 +5,15 @@ All notable changes to goDl will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Record**: inject external metrics (losses, hit rates) into the Collect/Flush pipeline.
+- **Trend.Latest**: convenience accessor for the most recent epoch value.
+- **Flush timing**: ETA, Elapsed, FlushCount, LastFlushDuration — built-in wall-clock tracking.
+- **WriteLog**: human-readable training log with per-epoch metrics, timing, and ETA.
+- **FormatDuration**: training-friendly duration formatting (42ms, 1.2s, 2m05s).
+
 ## [v0.1.0] - 2026-03-07
 
 Initial public release.
@@ -58,4 +67,5 @@ Initial public release.
 - Docker-based builds: CUDA image and CPU-only image (~2GB vs ~21GB).
 - GitHub Actions CI with CPU Docker image.
 
+[Unreleased]: https://github.com/fab2s/goDl/compare/v0.1.0...HEAD
 [v0.1.0]: https://github.com/fab2s/goDl/releases/tag/v0.1.0

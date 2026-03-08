@@ -173,10 +173,12 @@ model.OnLog(func(values map[string]*autograd.Variable) {
 })
 ```
 
-### Collect and Flush
+### Collect, Record, and Flush
 
 For epoch-level metrics, collect scalar values during the batch loop
-and flush at epoch boundaries:
+and flush at epoch boundaries. `Collect` captures tagged graph node
+outputs; `Record` injects external metrics (losses, hit rates — anything
+computed outside the graph) into the same pipeline:
 
 ```go
 for epoch := range epochs {
@@ -193,16 +195,22 @@ for epoch := range epochs {
         loss.Backward()
         optimizer.Step()
 
-        model.Collect("output")   // snapshot current value
+        model.Collect("output")              // from graph tag
+        model.Record("loss", loss.Item())    // external metric
     }
     model.Flush()                 // batch mean → epoch history
 }
 ```
 
 `Collect` appends the scalar value of each tagged node to a batch
-buffer. `Flush` computes the mean of the buffer, stores it in the
-epoch history, and clears the buffer. The epoch history is then
-queryable as a trend — see [Tutorial 8: Utilities](08-utilities.md#trend-based-training-control).
+buffer. `Record` pushes raw `float64` values into the same buffer.
+`Flush` computes the mean of the buffer, stores it in the epoch
+history, and clears the buffer. The epoch history is then queryable
+as a trend — see [Tutorial 8: Utilities](08-utilities.md#trend-based-training-control).
+
+Since losses are typically computed outside the graph (they need both
+graph outputs and external targets), `Record` is the natural way to
+track them alongside graph-internal metrics.
 
 ## Eval Mode
 

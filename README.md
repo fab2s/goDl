@@ -79,7 +79,7 @@ Requirements: Docker (with NVIDIA Container Toolkit for GPU support).
 git clone https://github.com/fab2s/goDl.git
 cd goDl
 make image    # build dev container (Go + libtorch + CUDA)
-make test     # run all 412 tests (CPU + CUDA)
+make test     # run all 427 tests (CPU + CUDA)
 make test-cpu # run without GPU
 make doc      # local doc server (pkg.go.dev style)
 make shell    # interactive shell in container
@@ -188,15 +188,20 @@ named ref forwarding — all handled by the graph, no manual wiring.
 ### Observation & Trends
 
 Tags double as observation points — collect metrics during training, flush
-to epoch history, and query trends to drive training decisions:
+to epoch history, and query trends to drive training decisions. `Record`
+injects external metrics (losses, hit rates) into the same pipeline:
 
 ```go
 for epoch := range epochs {
     for _, batch := range loader {
-        g.Forward(batch.Input)
-        g.Collect("loss")
+        pred := g.Forward(batch.Input)
+        g.Collect("hidden")                                 // from graph tag
+
+        loss := nn.CrossEntropyLoss(pred, target)
+        g.Record("loss", loss.Item())                       // external metric
+        g.Record("hit_rate", computeHitRate(pred, target))  // any float64
     }
-    g.Flush()
+    g.Flush()  // promotes batch means → epoch history (Collected + Recorded)
 
     if g.Trend("loss").Stalled(5, 1e-4) {
         scheduler.Decay()
@@ -212,10 +217,15 @@ for epoch := range epochs {
 | `g.Tagged(tag)` | Access a tagged node's output after Forward |
 | `g.Traces(tag)` | Access per-iteration side outputs from `Traced` loop bodies |
 | `g.Log(tags...)` | Print current tagged values (hookable via `OnLog`) |
-| `g.Collect(tags...)` / `g.Flush(tags...)` | Batch → epoch metric collection |
+| `g.Collect(tags...)` / `g.Flush(tags...)` | Batch → epoch metric collection (from graph tags) |
+| `g.Record(tag, values...)` | Inject external metrics into the same Collect/Flush pipeline |
 | `g.Trend(tag)` | Epoch-level trend: `Slope`, `Stalled`, `Improving`, `Converged` |
 | `g.Trends(tags...)` | Group trends: `AllImproving`, `AnyStalled`, `MeanSlope` (expands TagGroups) |
 | `g.Sub(tag)` | Reach into a sub-graph's metrics — no extra Forward needed |
+| `g.ETA(totalEpochs)` | Estimated remaining wall-clock time from flush cadence |
+| `g.FlushCount()` / `g.Elapsed()` | How many flushes and total wall time since first |
+| `g.WriteLog(path, total, tags...)` | Human-readable text log with per-epoch metrics and ETA |
+| `trend.Latest()` | Most recent epoch value (convenience for `Values()[len-1]`) |
 
 ### Tag Groups & Trend Groups
 
@@ -282,6 +292,7 @@ g.SVGWithProfile("profile.svg")
 // Training curves as self-contained HTML (open in any browser).
 g.PlotHTML("training.html", "loss", "head")  // expands TagGroups
 g.ExportTrends("metrics.csv", "loss")        // CSV for external tools
+g.WriteLog("training.log", 100, "loss")      // text log with ETA
 ```
 
 Node shapes indicate type (input, output, loop, map, switch, activation,
@@ -295,7 +306,7 @@ Every differentiable path is verified against finite-difference gradients:
 - 40 autograd op-level checks (every op + compositions)
 - 10 module-level checks (every NN module, input + parameter gradients)
 - 11 exact optimizer step verifications (SGD, Adam, AdamW)
-- 412 tests total, all passing with race detector
+- 427 tests total, all passing with race detector
 
 ## Why Go for Deep Learning?
 

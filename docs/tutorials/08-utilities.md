@@ -245,6 +245,7 @@ history. `Trend` returns a queryable view over that history:
 
 ```go
 trend := g.Trend("loss")
+trend.Latest()            // most recent epoch value (or 0)
 trend.Mean()              // mean across all flushed epochs
 trend.Slope(5)            // OLS slope over last 5 epochs
 trend.Improving(5)        // is slope negative? (loss decreasing)
@@ -282,6 +283,33 @@ if g.Trend("loss").Converged(5, 1e-5) {
 }
 ```
 
+### Recording external metrics
+
+Losses and other metrics computed outside the graph (they need both
+graph outputs and external targets) can be injected into the same
+Collect/Flush pipeline with `Record`:
+
+```go
+for epoch := range epochs {
+    for loader.Next() {
+        pred := g.Forward(input)
+        loss := nn.CrossEntropyLoss(pred, target)
+
+        g.Collect("hidden")                      // from graph tag
+        g.Record("loss", loss.Item())            // external scalar
+        g.Record("hit_rate", computeAccuracy())  // any float64
+    }
+    g.Flush()  // promotes both Collected and Recorded
+
+    fmt.Printf("loss: %.4f\n", g.Trend("loss").Values()[epoch])
+}
+```
+
+`Record` is variadic — `Record("tag", v1, v2, v3)` appends all values
+to the batch buffer in one call. Recorded and Collected values share
+the same buffer, so Flush, Trend, PlotHTML, and ExportTrends all work
+transparently with both.
+
 ### Sub-graph observation
 
 When a graph contains sub-graphs (Graph-as-Module), use `Sub` to
@@ -309,6 +337,52 @@ for epoch := range epochs {
     g.Sub("refine").Flush()
 }
 ```
+
+### ETA and flush timing
+
+The graph tracks wall-clock timestamps for each Flush call,
+enabling built-in ETA calculation:
+
+```go
+for epoch := range totalEpochs {
+    // ... training loop ...
+    g.Flush()
+
+    fmt.Printf("epoch %d  loss=%.4f  [%s  ETA %s]\n",
+        epoch+1,
+        g.Trend("loss").Latest(),
+        graph.FormatDuration(g.LastFlushDuration()),
+        graph.FormatDuration(g.ETA(totalEpochs)),
+    )
+}
+fmt.Printf("Done in %s\n", graph.FormatDuration(g.Elapsed()))
+```
+
+| Method | What it does |
+|--------|-------------|
+| `g.FlushCount()` | Number of Flush calls with data |
+| `g.Elapsed()` | Wall time since first Flush |
+| `g.ETA(total)` | Estimated remaining time (needs 2+ flushes) |
+| `g.LastFlushDuration()` | Time between last two flushes |
+| `graph.FormatDuration(d)` | Human-friendly format: `42ms`, `1.2s`, `2m05s` |
+
+### WriteLog
+
+Write a human-readable text log of all flushed epochs:
+
+```go
+g.WriteLog("training.log", totalEpochs, "loss", "hit_rate", "lr")
+```
+
+Output:
+
+```
+# goDl training log — 2026-03-08T10:30:00Z
+epoch   1  loss=0.5432  hit_rate=0.7123  lr=0.0010  [1.2s  ETA 1m58s]
+epoch   2  loss=0.4321  hit_rate=0.7856  lr=0.0010  [1.1s  ETA 1m47s]
+```
+
+Omit tags to include all, pass `0` for totalEpochs to skip ETA.
 
 ### ResetTrend
 

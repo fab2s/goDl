@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fab2s/goDl/autograd"
 	"github.com/fab2s/goDl/nn"
@@ -370,5 +371,137 @@ func TestExportTimingTrends(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	if len(lines) != 4 {
 		t.Fatalf("expected 4 lines, got %d", len(lines))
+	}
+}
+
+// --- Tier 3: WriteLog tests ---
+
+// TestWriteLogBasic verifies training log text output.
+func TestWriteLogBasic(t *testing.T) {
+	l, _ := nn.NewLinear(1, 1)
+	g, err := From(l).Tag("out").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate 3 epochs with recorded metrics.
+	for _, v := range []float64{0.8, 0.4, 0.2} {
+		g.Record("loss", v)
+		g.Record("lr", 0.001)
+		g.Flush()
+	}
+
+	path := t.TempDir() + "/training.log"
+	if err := g.WriteLog(path, 10, "loss", "lr"); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(data)
+
+	// Header.
+	if !strings.Contains(log, "# goDl training log") {
+		t.Fatal("log should contain header")
+	}
+	// Epoch lines.
+	if !strings.Contains(log, "epoch   1") {
+		t.Fatal("log should contain epoch 1")
+	}
+	if !strings.Contains(log, "epoch   3") {
+		t.Fatal("log should contain epoch 3")
+	}
+	// Tag values.
+	if !strings.Contains(log, "loss=") {
+		t.Fatal("log should contain loss values")
+	}
+	if !strings.Contains(log, "lr=") {
+		t.Fatal("log should contain lr values")
+	}
+
+	t.Logf("Generated log:\n%s", log)
+}
+
+// TestWriteLogAllTags verifies auto-discovery of tags.
+func TestWriteLogAllTags(t *testing.T) {
+	l, _ := nn.NewLinear(1, 1)
+	g, err := From(l).Tag("out").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g.Record("alpha", 1.0)
+	g.Record("beta", 2.0)
+	g.Flush()
+
+	path := t.TempDir() + "/auto.log"
+	if err := g.WriteLog(path, 0); err != nil { // no tags = all, totalEpochs=0 = no ETA
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(path)
+	log := string(data)
+	if !strings.Contains(log, "alpha=") || !strings.Contains(log, "beta=") {
+		t.Fatal("log should contain all tag names")
+	}
+}
+
+// TestWriteLogNoData verifies error when no data exists.
+func TestWriteLogNoData(t *testing.T) {
+	l, _ := nn.NewLinear(1, 1)
+	g, err := From(l).Tag("out").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := t.TempDir() + "/empty.log"
+	if err := g.WriteLog(path, 100); err == nil {
+		t.Fatal("expected error when no epoch data exists")
+	}
+}
+
+// --- FormatDuration tests ---
+
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{42 * time.Millisecond, "42ms"},
+		{500 * time.Millisecond, "500ms"},
+		{1500 * time.Millisecond, "1.5s"},
+		{30 * time.Second, "30.0s"},
+		{90 * time.Second, "1m30s"},
+		{125 * time.Second, "2m05s"},
+	}
+
+	for _, tt := range tests {
+		got := FormatDuration(tt.d)
+		if got != tt.want {
+			t.Errorf("FormatDuration(%v): got %q, want %q", tt.d, got, tt.want)
+		}
+	}
+}
+
+func TestFormatMetric(t *testing.T) {
+	tests := []struct {
+		v    float64
+		want string
+	}{
+		{0, "0"},
+		{0.0001, "1.00e-04"},
+		{0.5432, "0.5432"},
+		{1.2345, "1.2345"},
+		{42.1234, "42.1234"},
+		{1234.5, "1234.50"},
+	}
+
+	for _, tt := range tests {
+		got := formatMetric(tt.v)
+		if got != tt.want {
+			t.Errorf("formatMetric(%v): got %q, want %q", tt.v, got, tt.want)
+		}
 	}
 }

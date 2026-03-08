@@ -511,6 +511,126 @@ func TestCollectUnknownTag(t *testing.T) {
 	}
 }
 
+func TestRecord(t *testing.T) {
+	l, _ := nn.NewLinear(1, 1)
+	g, err := From(l).Tag("out").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Record external values (no Forward needed).
+	g.Record("ext_loss", 0.5)
+	g.Record("ext_loss", 0.3)
+	g.Record("ext_loss", 0.2)
+
+	collected := g.Collected("ext_loss")
+	if len(collected) != 3 {
+		t.Fatalf("collected: got %d values, want 3", len(collected))
+	}
+	for i, want := range []float64{0.5, 0.3, 0.2} {
+		if math.Abs(collected[i]-want) > 1e-10 {
+			t.Errorf("collected[%d]: got %f, want %f", i, collected[i], want)
+		}
+	}
+
+	// Flush should promote to epoch history.
+	g.Flush()
+	trend := g.Trend("ext_loss")
+	if trend.Len() != 1 {
+		t.Fatalf("trend length: got %d, want 1", trend.Len())
+	}
+	// Mean of 0.5, 0.3, 0.2 = 1.0/3 ≈ 0.3333
+	if math.Abs(trend.Values()[0]-1.0/3) > 1e-10 {
+		t.Errorf("epoch mean: got %f, want %f", trend.Values()[0], 1.0/3)
+	}
+}
+
+func TestRecordVariadic(t *testing.T) {
+	l, _ := nn.NewLinear(1, 1)
+	g, err := From(l).Tag("out").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Record multiple values in one call.
+	g.Record("metric", 1.0, 2.0, 3.0)
+	collected := g.Collected("metric")
+	if len(collected) != 3 {
+		t.Fatalf("collected: got %d, want 3", len(collected))
+	}
+
+	// Record with no values is a no-op.
+	g.Record("empty")
+	if g.Collected("empty") != nil {
+		t.Error("empty Record should not create buffer entry")
+	}
+}
+
+func TestRecordAndCollectMix(t *testing.T) {
+	l, _ := nn.NewLinear(1, 1)
+	setLinearWeights(l, []float32{1}, []float32{0})
+
+	g, err := From(l).Tag("out").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Mix Collect (from graph) and Record (external) in same epoch.
+	x, _ := tensor.FromFloat32([]float32{4}, []int64{1, 1})
+	g.Forward(autograd.NewVariable(x, false))
+	g.Collect("out")       // graph value: 4
+	g.Record("out", 6)     // external value: 6
+
+	g.Flush()
+	trend := g.Trend("out")
+	if trend.Len() != 1 {
+		t.Fatalf("trend length: got %d, want 1", trend.Len())
+	}
+	// Mean of 4 and 6 = 5.
+	if math.Abs(trend.Values()[0]-5) > 1e-4 {
+		t.Errorf("epoch mean: got %f, want 5", trend.Values()[0])
+	}
+}
+
+func TestRecordFlushTrend(t *testing.T) {
+	l, _ := nn.NewLinear(1, 1)
+	g, err := From(l).Tag("out").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate 3 epochs of purely external metrics.
+	epochs := [][]float64{
+		{1.0, 0.8, 0.6},   // mean = 0.8
+		{0.5, 0.4, 0.3},   // mean = 0.4
+		{0.2, 0.15, 0.1},  // mean = 0.15
+	}
+
+	for _, epoch := range epochs {
+		for _, v := range epoch {
+			g.Record("loss", v)
+		}
+		g.Flush()
+	}
+
+	trend := g.Trend("loss")
+	if trend.Len() != 3 {
+		t.Fatalf("trend length: got %d, want 3", trend.Len())
+	}
+	if !trend.Improving(0) {
+		t.Error("trend should be improving")
+	}
+	if math.Abs(trend.Values()[0]-0.8) > 1e-10 {
+		t.Errorf("epoch 0: got %f, want 0.8", trend.Values()[0])
+	}
+	if math.Abs(trend.Values()[1]-0.4) > 1e-10 {
+		t.Errorf("epoch 1: got %f, want 0.4", trend.Values()[1])
+	}
+	if math.Abs(trend.Values()[2]-0.15) > 1e-10 {
+		t.Errorf("epoch 2: got %f, want 0.15", trend.Values()[2])
+	}
+}
+
 func TestFlushEmpty(t *testing.T) {
 	l, _ := nn.NewLinear(1, 1)
 	g, err := From(l).Tag("out").Build()
@@ -565,4 +685,133 @@ func TestEndToEndTrainingPattern(t *testing.T) {
 	t.Logf("Epoch means: %v", trend.Values())
 	t.Logf("Slope: %.4f", trend.Slope(0))
 	t.Logf("Mean: %.4f", trend.Mean())
+}
+
+func TestFlushCount(t *testing.T) {
+	l, _ := nn.NewLinear(1, 1)
+	g, err := From(l).Tag("out").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if g.FlushCount() != 0 {
+		t.Error("flush count should be 0 before any flush")
+	}
+
+	// 3 flushes with recorded data.
+	for i := range 3 {
+		g.Record("loss", float64(i))
+		g.Flush()
+	}
+
+	if g.FlushCount() != 3 {
+		t.Errorf("flush count: got %d, want 3", g.FlushCount())
+	}
+
+	// Empty flush should not increment.
+	g.Flush()
+	if g.FlushCount() != 3 {
+		t.Errorf("empty flush should not increment: got %d, want 3", g.FlushCount())
+	}
+}
+
+func TestElapsed(t *testing.T) {
+	l, _ := nn.NewLinear(1, 1)
+	g, err := From(l).Tag("out").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if g.Elapsed() != 0 {
+		t.Error("elapsed should be 0 before any flush")
+	}
+
+	g.Record("loss", 1.0)
+	g.Flush()
+
+	// Elapsed should be positive after flush.
+	if g.Elapsed() <= 0 {
+		t.Error("elapsed should be positive after flush")
+	}
+}
+
+func TestLastFlushDuration(t *testing.T) {
+	l, _ := nn.NewLinear(1, 1)
+	g, err := From(l).Tag("out").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No flushes → 0.
+	if g.LastFlushDuration() != 0 {
+		t.Error("should be 0 before any flush")
+	}
+
+	g.Record("loss", 1.0)
+	g.Flush()
+
+	// Single flush → 0 (need at least 2).
+	if g.LastFlushDuration() != 0 {
+		t.Error("should be 0 with single flush")
+	}
+
+	g.Record("loss", 0.5)
+	g.Flush()
+
+	// Two flushes → positive duration.
+	if g.LastFlushDuration() < 0 {
+		t.Error("should be non-negative with two flushes")
+	}
+}
+
+func TestETA(t *testing.T) {
+	l, _ := nn.NewLinear(1, 1)
+	g, err := From(l).Tag("out").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No flushes → 0.
+	if g.ETA(100) != 0 {
+		t.Error("ETA should be 0 before any flush")
+	}
+
+	// Single flush → 0 (need 2 for rate estimate).
+	g.Record("loss", 1.0)
+	g.Flush()
+	if g.ETA(100) != 0 {
+		t.Error("ETA should be 0 with single flush")
+	}
+
+	g.Record("loss", 0.5)
+	g.Flush()
+
+	// Two flushes with total=100 → positive ETA.
+	eta := g.ETA(100)
+	if eta <= 0 {
+		t.Errorf("ETA should be positive, got %v", eta)
+	}
+
+	// Already done → 0.
+	if g.ETA(2) != 0 {
+		t.Errorf("ETA should be 0 when done, got %v", g.ETA(2))
+	}
+}
+
+func TestLatestFromGraph(t *testing.T) {
+	l, _ := nn.NewLinear(1, 1)
+	g, err := From(l).Tag("out").Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Record and flush 3 epochs.
+	for _, v := range []float64{1.0, 0.5, 0.2} {
+		g.Record("loss", v)
+		g.Flush()
+	}
+
+	if math.Abs(g.Trend("loss").Latest()-0.2) > 1e-10 {
+		t.Errorf("Latest: got %f, want 0.2", g.Trend("loss").Latest())
+	}
 }

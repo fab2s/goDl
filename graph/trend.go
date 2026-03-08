@@ -43,6 +43,14 @@ func (t *Trend) Last(n int) []float64 {
 	return t.values[len(t.values)-n:]
 }
 
+// Latest returns the most recent value, or 0 if the series is empty.
+func (t *Trend) Latest() float64 {
+	if len(t.values) == 0 {
+		return 0
+	}
+	return t.values[len(t.values)-1]
+}
+
 // Mean returns the arithmetic mean. Returns 0 for empty series.
 func (t *Trend) Mean() float64 {
 	if len(t.values) == 0 {

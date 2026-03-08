@@ -13,9 +13,12 @@
 //	g.Log("loss")                // loss: 0.2341
 //	g.Log()                      // all tags
 //
-// # Collecting and Flushing
+// # Collecting, Recording, and Flushing
 //
-// Collect snapshots scalar values into a batch buffer (within an epoch).
+// Collect snapshots scalar values from tagged graph nodes into a batch
+// buffer (within an epoch). Record injects external scalar values into
+// the same buffer — use this for metrics computed outside the graph
+// (e.g. losses that need both graph outputs and external targets).
 // Flush promotes the batch mean to epoch-level history, then clears
 // the buffer. This two-level structure gives you both fine-grained
 // batch data and coarse-grained epoch trends from the same mechanism.
@@ -23,7 +26,9 @@
 //	for epoch := range epochs {
 //	    for _, batch := range loader {
 //	        g.Forward(batch.Input)
-//	        g.Collect("loss")        // one value per batch
+//	        g.Collect("loss")                          // from graph tag
+//	        loss := nn.CrossEntropyLoss(pred, target)
+//	        g.Record("ext_loss", loss.Item())           // from outside
 //	    }
 //	    g.Flush()                    // batch mean → epoch history
 //	}
@@ -39,6 +44,16 @@
 //	if g.Trend("loss").Improving(3) {
 //	    g.Unfreeze("decoder")        // start fine-tuning
 //	}
+//	current := g.Trend("loss").Latest() // most recent epoch value
+//
+// # Flush timing and ETA
+//
+// Each Flush records a wall-clock timestamp. This enables built-in
+// ETA calculation and per-epoch duration tracking:
+//
+//	g.Flush()
+//	fmt.Printf("ETA: %s\n", graph.FormatDuration(g.ETA(100)))
+//	fmt.Printf("last epoch: %s\n", graph.FormatDuration(g.LastFlushDuration()))
 //
 // # Sub-graph observation
 //
@@ -76,6 +91,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/fab2s/goDl/autograd"
 )
@@ -190,6 +206,30 @@ func (g *Graph) Collect(tags ...string) {
 	}
 }
 
+// Record injects external scalar values into the batch buffer for a tag.
+// Use this for metrics computed outside the graph (e.g. losses that need
+// both graph outputs and external targets).
+//
+// Recorded values participate in the same Flush/Trend/Plot pipeline as
+// Collected values — no separate handling needed.
+//
+//	g.Forward(input)
+//	letterLoss := nn.CrossEntropyLoss(g.Tagged("logits"), targets)
+//	g.Record("letter_ce", letterLoss.Item())
+//	g.Record("hit_rate", hitRate)
+//	g.Flush()                        // promotes both Collected and Recorded
+//	g.Trend("letter_ce").Improving(5)
+//	g.PlotHTML("training.html")      // plots everything
+func (g *Graph) Record(tag string, values ...float64) {
+	if len(values) == 0 {
+		return
+	}
+	if g.batchBuffer == nil {
+		g.batchBuffer = make(map[string][]float64)
+	}
+	g.batchBuffer[tag] = append(g.batchBuffer[tag], values...)
+}
+
 // Collected returns the raw batch-level buffer for a tag — all values
 // since the last Flush. Returns nil if nothing has been collected.
 func (g *Graph) Collected(tag string) []float64 {
@@ -238,6 +278,16 @@ func (g *Graph) Flush(tags ...string) {
 		g.epochHistory[tag] = append(g.epochHistory[tag], mean)
 		flushed[tag] = mean
 		delete(g.batchBuffer, tag)
+	}
+
+	// Track flush timing for ETA calculation.
+	if len(flushed) > 0 {
+		now := time.Now()
+		g.flushCount++
+		if g.flushCount == 1 {
+			g.flushStart = now
+		}
+		g.flushTimes = append(g.flushTimes, now)
 	}
 
 	if g.flushFunc != nil && len(flushed) > 0 {
@@ -298,6 +348,50 @@ func (g *Graph) ResetTrend(tags ...string) {
 	for _, tag := range tags {
 		delete(g.epochHistory, tag)
 	}
+}
+
+// FlushCount returns the number of Flush calls that produced data.
+// Each Flush typically corresponds to one training epoch.
+func (g *Graph) FlushCount() int {
+	return g.flushCount
+}
+
+// Elapsed returns the wall-clock time since the first Flush.
+// Returns 0 if Flush has never been called.
+func (g *Graph) Elapsed() time.Duration {
+	if g.flushCount == 0 {
+		return 0
+	}
+	return time.Since(g.flushStart)
+}
+
+// ETA estimates the remaining wall-clock time based on flush cadence.
+// totalEpochs is the total expected number of Flush calls (epochs).
+// Returns 0 if fewer than 2 flushes have occurred (not enough data).
+//
+//	remaining := g.ETA(100)
+//	fmt.Printf("ETA: %s\n", remaining)
+func (g *Graph) ETA(totalEpochs int) time.Duration {
+	if g.flushCount < 2 {
+		return 0
+	}
+	elapsed := g.flushTimes[g.flushCount-1].Sub(g.flushStart)
+	perFlush := elapsed / time.Duration(g.flushCount-1)
+	remaining := totalEpochs - g.flushCount
+	if remaining <= 0 {
+		return 0
+	}
+	return perFlush * time.Duration(remaining)
+}
+
+// LastFlushDuration returns the wall-clock time between the two most
+// recent Flush calls. Returns 0 if fewer than 2 flushes have occurred.
+func (g *Graph) LastFlushDuration() time.Duration {
+	n := len(g.flushTimes)
+	if n < 2 {
+		return 0
+	}
+	return g.flushTimes[n-1].Sub(g.flushTimes[n-2])
 }
 
 // captureTagged stores the output of tagged nodes during Forward.

@@ -186,29 +186,29 @@
 <path fill="none" stroke="#2c3e50" d="M222.93,-2310.17C221.33,-2296.81 219.09,-2278.06 217.25,-2262.69"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" points="220.72,-2262.22 216.06,-2252.7 213.77,-2263.05 220.72,-2262.22"/>
 </g>
-<!-- Graph_3 -->
+<!-- Graph_4 -->
 <g id="node5" class="node">
-<title>Graph_3</title>
+<title>Graph_4</title>
 <polygon fill="#d6eaf8" stroke="black" points="154,-2158.48 70,-2158.48 70,-2122.48 154,-2122.48 154,-2158.48"/>
 <text text-anchor="middle" x="112" y="-2143.68" font-family="Helvetica,sans-Serif" font-size="11.00">Graph (sub)</text>
 <text text-anchor="middle" x="112" y="-2131.68" font-family="Helvetica,sans-Serif" font-size="11.00">[88 params]</text>
 </g>
-<!-- LayerNorm_2&#45;&gt;Graph_3 -->
-<g id="edge7" class="edge">
-<title>LayerNorm_2&#45;&gt;Graph_3</title>
+<!-- LayerNorm_2&#45;&gt;Graph_4 -->
+<g id="edge8" class="edge">
+<title>LayerNorm_2&#45;&gt;Graph_4</title>
 <path fill="none" stroke="#2c3e50" d="M193.47,-2216.12C184.1,-2208.1 172.9,-2198.4 163,-2189.48 154.51,-2181.83 145.38,-2173.33 137.23,-2165.63"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" points="139.43,-2162.89 129.76,-2158.55 134.61,-2167.97 139.43,-2162.89"/>
 </g>
-<!-- Graph_4 -->
+<!-- Graph_3 -->
 <g id="node6" class="node">
-<title>Graph_4</title>
+<title>Graph_3</title>
 <polygon fill="#d6eaf8" stroke="black" points="256,-2158.48 172,-2158.48 172,-2122.48 256,-2122.48 256,-2158.48"/>
 <text text-anchor="middle" x="214" y="-2143.68" font-family="Helvetica,sans-Serif" font-size="11.00">Graph (sub)</text>
 <text text-anchor="middle" x="214" y="-2131.68" font-family="Helvetica,sans-Serif" font-size="11.00">[88 params]</text>
 </g>
-<!-- LayerNorm_2&#45;&gt;Graph_4 -->
-<g id="edge8" class="edge">
-<title>LayerNorm_2&#45;&gt;Graph_4</title>
+<!-- LayerNorm_2&#45;&gt;Graph_3 -->
+<g id="edge7" class="edge">
+<title>LayerNorm_2&#45;&gt;Graph_3</title>
 <path fill="none" stroke="#2c3e50" d="M214,-2216.17C214,-2202.94 214,-2184.42 214,-2169.14"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" points="217.5,-2168.7 214,-2158.7 210.5,-2168.7 217.5,-2168.7"/>
 </g>
@@ -218,15 +218,15 @@
 <polygon fill="#eaecee" stroke="black" points="190,-2064.48 108,-2064.48 108,-2028.48 190,-2028.48 190,-2064.48"/>
 <text text-anchor="middle" x="149" y="-2043.68" font-family="Helvetica,sans-Serif" font-size="11.00">meanMerge</text>
 </g>
-<!-- Graph_3&#45;&gt;meanMerge_5 -->
-<g id="edge9" class="edge">
-<title>Graph_3&#45;&gt;meanMerge_5</title>
-<path fill="none" stroke="#2c3e50" d="M118.96,-2122.17C124.39,-2108.68 132.02,-2089.7 138.23,-2074.25"/>
-<polygon fill="#2c3e50" stroke="#2c3e50" points="141.59,-2075.29 142.07,-2064.7 135.09,-2072.67 141.59,-2075.29"/>
-</g>
 <!-- Graph_4&#45;&gt;meanMerge_5 -->
 <g id="edge10" class="edge">
 <title>Graph_4&#45;&gt;meanMerge_5</title>
+<path fill="none" stroke="#2c3e50" d="M118.96,-2122.17C124.39,-2108.68 132.02,-2089.7 138.23,-2074.25"/>
+<polygon fill="#2c3e50" stroke="#2c3e50" points="141.59,-2075.29 142.07,-2064.7 135.09,-2072.67 141.59,-2075.29"/>
+</g>
+<!-- Graph_3&#45;&gt;meanMerge_5 -->
+<g id="edge9" class="edge">
+<title>Graph_3&#45;&gt;meanMerge_5</title>
 <path fill="none" stroke="#2c3e50" d="M201.77,-2122.17C191.97,-2108.29 178.06,-2088.61 166.99,-2072.94"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" points="169.8,-2070.85 161.17,-2064.7 164.08,-2074.89 169.8,-2070.85"/>
 </g>
