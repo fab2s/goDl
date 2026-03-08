@@ -360,3 +360,71 @@ func TestLoaderErrorPropagation(t *testing.T) {
 		t.Errorf("batches = %d, expected at most 2 before error", batches)
 	}
 }
+
+// --- Device placement ---
+
+func TestLoaderDeviceCPU(t *testing.T) {
+	ds := &rangeDataset{n: 6}
+	loader := data.NewLoader(ds, data.LoaderConfig{
+		BatchSize: 3,
+		Device:    tensor.DevicePtr(tensor.CPU),
+	})
+	defer loader.Close()
+
+	for loader.Next() {
+		input, target := loader.Batch()
+		if input.Device() != tensor.CPU {
+			t.Errorf("input on %v, want CPU", input.Device())
+		}
+		if target.Device() != tensor.CPU {
+			t.Errorf("target on %v, want CPU", target.Device())
+		}
+	}
+	if err := loader.Err(); err != nil {
+		t.Fatalf("Err: %v", err)
+	}
+}
+
+func TestLoaderDeviceNil(t *testing.T) {
+	// Device=nil should not alter batch behavior.
+	ds := &rangeDataset{n: 6}
+	loader := data.NewLoader(ds, data.LoaderConfig{
+		BatchSize: 3,
+	})
+	defer loader.Close()
+
+	batches := 0
+	for loader.Next() {
+		input, _ := loader.Batch()
+		if input.Device() != tensor.CPU {
+			t.Errorf("expected CPU when Device is nil")
+		}
+		batches++
+	}
+	if batches != 2 {
+		t.Errorf("batches = %d, want 2", batches)
+	}
+}
+
+func TestLoaderDeviceParallel(t *testing.T) {
+	ds := &rangeDataset{n: 8}
+	loader := data.NewLoader(ds, data.LoaderConfig{
+		BatchSize:  4,
+		NumWorkers: 2,
+		Device:     tensor.DevicePtr(tensor.CPU),
+	})
+	defer loader.Close()
+
+	for loader.Next() {
+		input, target := loader.Batch()
+		if input.Device() != tensor.CPU {
+			t.Errorf("parallel input on %v, want CPU", input.Device())
+		}
+		if target.Device() != tensor.CPU {
+			t.Errorf("parallel target on %v, want CPU", target.Device())
+		}
+	}
+	if err := loader.Err(); err != nil {
+		t.Fatalf("Err: %v", err)
+	}
+}

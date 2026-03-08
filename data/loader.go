@@ -9,11 +9,12 @@ import (
 
 // LoaderConfig configures a Loader.
 type LoaderConfig struct {
-	BatchSize  int  // samples per batch (required, must be > 0)
-	Shuffle    bool // randomize sample order each epoch
-	NumWorkers int  // parallel fetch goroutines (0 = sequential)
-	PrefetchN  int  // batches buffered ahead (0 = no prefetch)
-	DropLast   bool // drop incomplete final batch
+	BatchSize  int            // samples per batch (required, must be > 0)
+	Shuffle    bool           // randomize sample order each epoch
+	NumWorkers int            // parallel fetch goroutines (0 = sequential)
+	PrefetchN  int            // batches buffered ahead (0 = no prefetch)
+	DropLast   bool           // drop incomplete final batch
+	Device     *tensor.Device // move batches to this device after stacking (nil = no move)
 }
 
 // batch holds a stacked input/target pair ready for consumption.
@@ -143,6 +144,19 @@ func (l *Loader) nextSequential() bool {
 		l.err = err
 		return false
 	}
+
+	if l.cfg.Device != nil {
+		l.curInput = l.curInput.ToDevice(*l.cfg.Device)
+		if err := l.curInput.Err(); err != nil {
+			l.err = err
+			return false
+		}
+		l.curTarget = l.curTarget.ToDevice(*l.cfg.Device)
+		if err := l.curTarget.Err(); err != nil {
+			l.err = err
+			return false
+		}
+	}
 	return true
 }
 
@@ -260,6 +274,17 @@ func (l *Loader) batchProducer() {
 		}
 		if err := stacked.target.Err(); err != nil {
 			return
+		}
+
+		if l.cfg.Device != nil {
+			stacked.input = stacked.input.ToDevice(*l.cfg.Device)
+			if err := stacked.input.Err(); err != nil {
+				return
+			}
+			stacked.target = stacked.target.ToDevice(*l.cfg.Device)
+			if err := stacked.target.Err(); err != nil {
+				return
+			}
 		}
 
 		select {

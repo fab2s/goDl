@@ -112,6 +112,100 @@ if err := loader.Err(); err != nil {
 loader.Reset()  // start a new epoch (reshuffles if Shuffle=true)
 ```
 
+## Device Placement
+
+By default, all tensors and parameters live on CPU. To train on CUDA,
+use `SetDevice` on the graph and optionally `Device` on the loader.
+
+### Moving the model
+
+`SetDevice` moves all parameters and state buffers to the target
+device. It recurses into sub-graphs and composite modules (loops,
+switches, maps) automatically.
+
+```go
+model, _ := buildModel()
+
+if tensor.CUDAAvailable() {
+    model.SetDevice(tensor.CUDA)
+}
+
+// Create optimizer AFTER SetDevice — optimizer state tensors are
+// allocated lazily on first Step, matching the parameter device.
+optimizer := nn.NewAdam(model.Parameters(), 0.001)
+```
+
+### Moving data
+
+The loader can move batches to a device after stacking:
+
+```go
+loader := data.NewLoader(ds, data.LoaderConfig{
+    BatchSize: 32,
+    Shuffle:   true,
+    Device:    tensor.DevicePtr(tensor.CUDA), // both input and target
+})
+```
+
+When `Device` is nil (the default), no move happens — existing code
+is unaffected.
+
+### Auto-move inputs at graph entry
+
+If the graph has a device set via `SetDevice` and a Forward input is
+on a different device, the graph moves it automatically. This is
+useful for ad-hoc inference without a loader:
+
+```go
+model.SetDevice(tensor.CUDA)
+
+// CPU tensor — graph auto-moves to CUDA before execution.
+cpuInput, _ := tensor.FromFloat32(data, shape)
+output := model.Forward(autograd.NewVariable(cpuInput, false))
+```
+
+For training loops, prefer the loader's `Device` option — it moves
+both input and target tensors, avoiding the target-side mismatch that
+auto-move alone cannot handle.
+
+### Full CUDA training pattern
+
+```go
+model, _ := buildModel()
+model.SetDevice(tensor.CUDA)
+optimizer := nn.NewAdam(model.Parameters(), 0.001)
+
+loader := data.NewLoader(ds, data.LoaderConfig{
+    BatchSize: 32,
+    Shuffle:   true,
+    Device:    tensor.DevicePtr(tensor.CUDA),
+})
+defer loader.Close()
+
+model.SetTraining(true)
+for loader.Next() {
+    inT, tgtT := loader.Batch() // already on CUDA
+    pred := model.Forward(autograd.NewVariable(inT, true))
+    loss := nn.MSELoss(pred, autograd.NewVariable(tgtT, false))
+
+    optimizer.ZeroGrad()
+    loss.Backward()
+    nn.ClipGradNorm(model.Parameters(), 1.0)
+    optimizer.Step()
+}
+```
+
+### Device query
+
+`Device()` returns the configured device, or nil if `SetDevice` was
+never called:
+
+```go
+if d := model.Device(); d != nil {
+    fmt.Println("model on", *d) // "cuda" or "cpu"
+}
+```
+
 ## The Training Loop
 
 The standard pattern is: **forward -> loss -> zeroGrad -> backward -> clip -> step**.

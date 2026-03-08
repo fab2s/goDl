@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Checkpoint**: composable training resume — bundles model parameters, optimizer state, scheduler state, and epoch into a single file. Supports `Save(epoch)` / `Load()` / `LoadEpoch(n)`.
 - **Stateful interface**: `SaveState(io.Writer) / LoadState(io.Reader)` implemented by all optimizers (SGD, Adam, AdamW), schedulers (StepDecay, Cosine, Warmup, Plateau), and GradScaler.
 - **Detachable interface**: `nn.Detachable` for modules holding Variables in struct fields across Forward calls. `nn.Detach(m)` helper.
+- **Device placement**: `Graph.SetDevice(device)` moves all parameters and state buffers, recurses into sub-graphs and composites. `Graph.Device()` getter. Auto-moves input tensors at graph entry when device is set.
+- **Loader device**: `LoaderConfig{Device: tensor.DevicePtr(tensor.CUDA)}` moves both input and target batches after stacking.
+- **Variable.ToDevice**: moves a variable's data to a target device, preserving `requiresGrad`.
+- **tensor.DevicePtr**: convenience helper for `*tensor.Device` in config structs.
 
 ### Fixed
 - **DetachState memory growth**: `DetachState` is now recursive — walks sub-graphs and calls `Detach()` on all `Detachable` modules. Previously only detached the graph's own forward-reference state buffers, leaving module-level state (hidden vectors, attention locations) attached. This caused unbounded memory growth in models with stateful loop bodies.

@@ -605,3 +605,28 @@ func TestVariableItem(t *testing.T) {
 		t.Errorf("Item() = %f, want 42", v2.Item())
 	}
 }
+
+func TestVariableToDeviceSameDevice(t *testing.T) {
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	v := autograd.NewVariable(xt, true)
+	moved := v.ToDevice(tensor.CPU)
+	// Same device — should return same variable.
+	if moved != v {
+		t.Error("ToDevice(CPU) on CPU variable should return same variable")
+	}
+}
+
+func TestVariableToDevicePreservesGrad(t *testing.T) {
+	xt, _ := tensor.FromFloat32([]float32{1, 2}, []int64{2})
+	v := autograd.NewVariable(xt, true)
+	moved := v.ToDevice(tensor.CPU)
+	if !moved.RequiresGrad() {
+		t.Error("ToDevice should preserve requiresGrad=true")
+	}
+
+	v2 := autograd.NewVariable(xt, false)
+	moved2 := v2.ToDevice(tensor.CPU)
+	if moved2.RequiresGrad() {
+		t.Error("ToDevice should preserve requiresGrad=false")
+	}
+}

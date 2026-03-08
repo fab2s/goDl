@@ -35,3 +35,11 @@ func CUDAAvailable() bool {
 func CUDADeviceCount() int {
 	return libtorch.CUDADeviceCount()
 }
+
+// DevicePtr returns a pointer to the given Device value.
+// Convenience for configuration structs:
+//
+//	cfg := data.LoaderConfig{Device: tensor.DevicePtr(tensor.CUDA)}
+func DevicePtr(d Device) *Device {
+	return &d
+}

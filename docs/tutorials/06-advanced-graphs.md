@@ -656,6 +656,7 @@ output := model.Forward(testInput)
 | Auto-reset | implement `nn.Resettable` | Graph resets before Forward |
 | Soft routing | `Gate(router, experts...)` | All execute, weighted sum |
 | Hard routing | `Switch(router, branches...)` | One executes, index select |
+| Device placement | `g.SetDevice(tensor.CUDA)` | Move params + state, auto-move inputs |
 
 ## What's next
 

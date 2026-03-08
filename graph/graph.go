@@ -33,6 +33,7 @@ import (
 
 	"github.com/fab2s/goDl/autograd"
 	"github.com/fab2s/goDl/nn"
+	"github.com/fab2s/goDl/tensor"
 )
 
 // execCtx holds the context.Context for the current Forward call.
@@ -93,6 +94,7 @@ type Graph struct {
 	tags      map[string]string   // tag name → node ID (for visualization)
 	tagGroups map[string][]string // group name → suffixed tag names (from TagGroup)
 	frozen    map[string]bool     // frozen tag names (for parameter freezing)
+	device    *tensor.Device      // target device for auto-move (nil = no auto-move)
 
 	// Context — see ForwardCtx.
 	execCtx *execCtx // shared with loop/map closures for cancellation
@@ -156,6 +158,18 @@ func (g *Graph) ForwardCtx(ctx context.Context, inputs ...*autograd.Variable) *a
 	if len(inputs) != len(g.inputs) {
 		return autograd.ErrVariable(fmt.Errorf(
 			"graph: expected %d inputs, got %d", len(g.inputs), len(inputs)))
+	}
+
+	// Auto-move inputs to graph device if configured.
+	if g.device != nil {
+		for i, inp := range inputs {
+			if inp.Data().Device() != *g.device {
+				inputs[i] = inp.ToDevice(*g.device)
+				if err := inputs[i].Err(); err != nil {
+					return autograd.ErrVariable(fmt.Errorf("graph: input device move: %w", err))
+				}
+			}
+		}
 	}
 
 	// Auto-reset Resettable modules before execution.
@@ -539,6 +553,71 @@ func (g *Graph) DetachState() {
 			sub.DetachState()
 		}
 		nn.Detach(node.module)
+	}
+}
+
+// Device returns the device set on this graph, or nil if no device
+// placement has been configured. When nil, no automatic input
+// migration happens during Forward.
+func (g *Graph) Device() *tensor.Device {
+	return g.device
+}
+
+// SetDevice moves all parameters and state buffers to the given device
+// and records the device for automatic input migration during Forward.
+//
+// SetDevice recurses into sub-graphs and composite modules (loops,
+// switches, maps). Call before creating optimizers — optimizer state
+// tensors are allocated lazily on first Step, matching the parameter
+// device automatically.
+//
+//	if tensor.CUDAAvailable() {
+//	    g.SetDevice(tensor.CUDA)
+//	}
+//	optimizer := nn.NewAdam(g.Parameters(), 0.001)
+func (g *Graph) SetDevice(device tensor.Device) {
+	d := device
+	g.device = &d
+
+	// Move all parameters.
+	for _, p := range g.Parameters() {
+		if p.Data().Device() != device {
+			p.SetData(p.Data().ToDevice(device))
+		}
+	}
+
+	// Move state buffer values.
+	for _, s := range g.state {
+		if s.value != nil && s.value.Data().Device() != device {
+			s.value = autograd.NewVariable(s.value.Data().ToDevice(device), false)
+		}
+	}
+
+	// Recurse into sub-graphs and composites to set their device field.
+	for _, node := range g.order {
+		if node.module == nil {
+			continue
+		}
+		setDeviceOnModule(node.module, device)
+	}
+}
+
+// setDeviceOnModule propagates SetDevice into composite module types
+// that may contain sub-graphs.
+func setDeviceOnModule(m nn.Module, device tensor.Device) {
+	switch v := m.(type) {
+	case *Graph:
+		v.SetDevice(device)
+	case *loopComposite:
+		setDeviceOnModule(v.body, device)
+		setDeviceOnModule(v.cond, device)
+	case *switchComposite:
+		setDeviceOnModule(v.router, device)
+		for _, b := range v.branches {
+			setDeviceOnModule(b, device)
+		}
+	case *mapComposite:
+		setDeviceOnModule(v.body, device)
 	}
 }
 

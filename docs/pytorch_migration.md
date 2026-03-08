@@ -534,6 +534,49 @@ outermost graph covers everything.
 Only for models with cross-step state — forward references in goDl,
 hidden states in PyTorch. Plain feedforward models don't need it.
 
+## Device Placement
+
+```python
+# PyTorch
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model = MyModel().to(device)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+for batch in dataloader:
+    inputs = batch.input.to(device)
+    targets = batch.target.to(device)
+    # ...
+```
+
+```go
+// goDl — graph-level device, loader-level batch move
+model, _ := buildModel()
+if tensor.CUDAAvailable() {
+    model.SetDevice(tensor.CUDA)
+}
+optimizer := nn.NewAdam(model.Parameters(), 0.001)
+
+loader := data.NewLoader(ds, data.LoaderConfig{
+    BatchSize: 32,
+    Device:    tensor.DevicePtr(tensor.CUDA),
+})
+
+for loader.Next() {
+    inT, tgtT := loader.Batch() // already on CUDA
+    // ...
+}
+```
+
+Key differences:
+
+| Aspect | PyTorch | goDl |
+|--------|---------|------|
+| Model move | `model.to(device)` — per-module recursive | `model.SetDevice(device)` — same, includes state buffers |
+| Data move | Manual `tensor.to(device)` per batch | `LoaderConfig{Device: ...}` moves both input and target |
+| Input auto-move | No — device mismatch is a runtime error | Yes — graph auto-moves inputs if device is set |
+| Device query | `next(model.parameters()).device` | `model.Device()` returns `*tensor.Device` |
+| Ordering | `model.to()` before optimizer creation | Same — `SetDevice` before `NewAdam` |
+
 ## Weight Initialization
 
 ```python

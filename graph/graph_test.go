@@ -3074,3 +3074,155 @@ func containsAll(s string, subs ...string) bool {
 	}
 	return true
 }
+
+// --- Device placement tests ---
+
+func TestSetDeviceCPU(t *testing.T) {
+	// SetDevice(CPU) should record device and leave CPU params unchanged.
+	l1 := nn.MustLinear(4, 8)
+	l2 := nn.MustLinear(8, 2)
+	g, err := From(l1).Through(l2).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g.SetDevice(tensor.CPU)
+	if g.Device() == nil {
+		t.Fatal("Device() should be non-nil after SetDevice")
+	}
+	if *g.Device() != tensor.CPU {
+		t.Fatalf("Device() = %v, want CPU", *g.Device())
+	}
+
+	for _, p := range g.Parameters() {
+		if p.Data().Device() != tensor.CPU {
+			t.Errorf("parameter %s on %v, want CPU", p.Name, p.Data().Device())
+		}
+	}
+
+	// Forward should still work.
+	in, _ := tensor.Ones([]int64{1, 4})
+	out := g.Forward(autograd.NewVariable(in, false))
+	if err := out.Err(); err != nil {
+		t.Fatalf("Forward after SetDevice(CPU): %v", err)
+	}
+}
+
+func TestDeviceNilByDefault(t *testing.T) {
+	g, err := From(nn.MustLinear(4, 2)).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Device() != nil {
+		t.Fatalf("Device() should be nil before SetDevice, got %v", g.Device())
+	}
+}
+
+func TestSetDeviceRecursive(t *testing.T) {
+	// Sub-graph should also get device set.
+	inner, err := From(nn.MustLinear(4, 4)).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer, err := From(inner).Through(nn.MustLinear(4, 2)).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outer.SetDevice(tensor.CPU)
+
+	if inner.Device() == nil {
+		t.Fatal("inner graph Device() should be non-nil after outer.SetDevice")
+	}
+	if *inner.Device() != tensor.CPU {
+		t.Fatalf("inner Device() = %v, want CPU", *inner.Device())
+	}
+}
+
+func TestSetDeviceWithForwardRef(t *testing.T) {
+	// Graph with forward reference — state buffer auto-fills should
+	// work after SetDevice.
+	proj := nn.MustLinear(4, 4)
+	setLinearWeights(proj, identityN(4), []float32{0, 0, 0, 0})
+	g, err := From(proj).
+		Through(&nilSafeAdd{}).Using("mem").Tag("mem").
+		Through(nn.MustLinear(4, 2)).
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g.SetDevice(tensor.CPU)
+
+	in, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4})
+	out := g.Forward(autograd.NewVariable(in, false))
+	if err := out.Err(); err != nil {
+		t.Fatalf("Forward with forward ref after SetDevice: %v", err)
+	}
+}
+
+func TestSetDeviceWithLoop(t *testing.T) {
+	// Loop composite should propagate device.
+	body := nn.MustLinear(4, 4)
+	g, err := From(nn.MustLinear(4, 4)).
+		Loop(body).For(3).
+		Through(nn.MustLinear(4, 2)).
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g.SetDevice(tensor.CPU)
+
+	// All params should be on CPU.
+	for _, p := range g.Parameters() {
+		if p.Data().Device() != tensor.CPU {
+			t.Errorf("parameter %s on %v, want CPU", p.Name, p.Data().Device())
+		}
+	}
+
+	in, _ := tensor.Ones([]int64{1, 4})
+	out := g.Forward(autograd.NewVariable(in, false))
+	if err := out.Err(); err != nil {
+		t.Fatalf("Forward after SetDevice with loop: %v", err)
+	}
+}
+
+func TestSetDeviceIdempotent(t *testing.T) {
+	// Calling SetDevice twice with the same device is harmless.
+	g, err := From(nn.MustLinear(4, 2)).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g.SetDevice(tensor.CPU)
+	g.SetDevice(tensor.CPU)
+
+	in, _ := tensor.Ones([]int64{1, 4})
+	out := g.Forward(autograd.NewVariable(in, false))
+	if err := out.Err(); err != nil {
+		t.Fatalf("Forward after double SetDevice: %v", err)
+	}
+}
+
+func TestAutoMoveInputCPU(t *testing.T) {
+	// With SetDevice(CPU), CPU inputs should pass through unchanged.
+	l := nn.MustLinear(4, 2)
+	g, err := From(l).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g.SetDevice(tensor.CPU)
+
+	in, _ := tensor.Ones([]int64{1, 4})
+	out := g.Forward(autograd.NewVariable(in, true))
+	if err := out.Err(); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Verify output is on CPU.
+	if out.Data().Device() != tensor.CPU {
+		t.Errorf("output on %v, want CPU", out.Data().Device())
+	}
+}

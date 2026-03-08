@@ -182,3 +182,21 @@ func (v *Variable) Detach() *Variable {
 	}
 	return NewVariable(v.data, false)
 }
+
+// ToDevice moves the variable's data to the given device, returning a
+// new leaf variable. This is a data-movement operation, not a
+// differentiable op — used for transparent input device placement.
+// Returns v unchanged if already on the target device.
+func (v *Variable) ToDevice(device tensor.Device) *Variable {
+	if !v.valid() {
+		return v
+	}
+	if v.data.Device() == device {
+		return v
+	}
+	moved := v.data.ToDevice(device)
+	if err := moved.Err(); err != nil {
+		return errVariable(err)
+	}
+	return NewVariable(moved, v.requiresGrad)
+}
