@@ -34,11 +34,12 @@ func mustData(t *testing.T, ts *tensor.Tensor) []float32 {
 // --- Add ---
 
 func TestAddBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// z = x + y, loss = sum(z)
 	// dL/dx = [1, 1, 1], dL/dy = [1, 1, 1]
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
-	yt, _ := tensor.FromFloat32([]float32{4, 5, 6}, []int64{3})
+	yt, _ := tensor.FromFloat32([]float32{4, 5, 6}, []int64{3}, tensor.WithDevice(testDevice))
 	defer yt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -59,11 +60,12 @@ func TestAddBackward(t *testing.T) {
 // --- Sub ---
 
 func TestSubBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// z = x - y, loss = sum(z)
 	// dL/dx = [1, 1, 1], dL/dy = [-1, -1, -1]
-	xt, _ := tensor.FromFloat32([]float32{5, 6, 7}, []int64{3})
+	xt, _ := tensor.FromFloat32([]float32{5, 6, 7}, []int64{3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
-	yt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	yt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	defer yt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -81,11 +83,12 @@ func TestSubBackward(t *testing.T) {
 // --- Mul ---
 
 func TestMulBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// z = x * y, loss = sum(z)
 	// dL/dx = y = [4, 5, 6], dL/dy = x = [1, 2, 3]
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
-	yt, _ := tensor.FromFloat32([]float32{4, 5, 6}, []int64{3})
+	yt, _ := tensor.FromFloat32([]float32{4, 5, 6}, []int64{3}, tensor.WithDevice(testDevice))
 	defer yt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -103,15 +106,16 @@ func TestMulBackward(t *testing.T) {
 // --- Matmul ---
 
 func TestMatmulBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// x [1,3] @ w [3,2] = z [1,2], loss = sum(z)
 	// x = [1, 2, 3], w = [[1, 0], [0, 1], [0, 0]]
 	// z = [1, 2]
 	// dL/dz = [1, 1]
 	// dL/dx = dL/dz @ w^T = [1,1] @ [[1,0,0],[0,1,0]] = [1, 1, 0]
 	// dL/dw = x^T @ dL/dz = [[1],[2],[3]] @ [[1,1]] = [[1,1],[2,2],[3,3]]
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
-	wt, _ := tensor.FromFloat32([]float32{1, 0, 0, 1, 0, 0}, []int64{3, 2})
+	wt, _ := tensor.FromFloat32([]float32{1, 0, 0, 1, 0, 0}, []int64{3, 2}, tensor.WithDevice(testDevice))
 	defer wt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -129,10 +133,11 @@ func TestMatmulBackward(t *testing.T) {
 // --- ReLU ---
 
 func TestReLUBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// x = [-2, -1, 0, 1, 2], z = relu(x) = [0, 0, 0, 1, 2]
 	// loss = sum(z) = 3
 	// dL/dx = [0, 0, 0, 1, 1]  (gradient flows where x > 0)
-	xt, _ := tensor.FromFloat32([]float32{-2, -1, 0, 1, 2}, []int64{5})
+	xt, _ := tensor.FromFloat32([]float32{-2, -1, 0, 1, 2}, []int64{5}, tensor.WithDevice(testDevice))
 	defer xt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -147,11 +152,12 @@ func TestReLUBackward(t *testing.T) {
 // --- Sigmoid ---
 
 func TestSigmoidBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// x = [0], sigmoid(0) = 0.5
 	// dσ/dx = σ(x) * (1 - σ(x)) = 0.5 * 0.5 = 0.25
 	// loss = sum(sigmoid(x)) = 0.5
 	// dL/dx = 0.25
-	xt, _ := tensor.FromFloat32([]float32{0}, []int64{1})
+	xt, _ := tensor.FromFloat32([]float32{0}, []int64{1}, tensor.WithDevice(testDevice))
 	defer xt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -166,11 +172,12 @@ func TestSigmoidBackward(t *testing.T) {
 // --- Tanh ---
 
 func TestTanhBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// x = [0], tanh(0) = 0
 	// dtanh/dx = 1 - tanh²(x) = 1 - 0 = 1
 	// loss = sum(tanh(x)) = 0
 	// dL/dx = 1
-	xt, _ := tensor.FromFloat32([]float32{0}, []int64{1})
+	xt, _ := tensor.FromFloat32([]float32{0}, []int64{1}, tensor.WithDevice(testDevice))
 	defer xt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -185,13 +192,14 @@ func TestTanhBackward(t *testing.T) {
 // --- Chain rule: linear layer ---
 
 func TestLinearLayerBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// y = ReLU(x @ W + b), loss = sum(y)
 	// x [1,3], W [3,2], b [1,2]
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
-	wt, _ := tensor.FromFloat32([]float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6}, []int64{3, 2})
+	wt, _ := tensor.FromFloat32([]float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6}, []int64{3, 2}, tensor.WithDevice(testDevice))
 	defer wt.Release()
-	bt, _ := tensor.FromFloat32([]float32{-1, 0.5}, []int64{1, 2})
+	bt, _ := tensor.FromFloat32([]float32{-1, 0.5}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	defer bt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -237,9 +245,10 @@ func TestLinearLayerBackward(t *testing.T) {
 // --- Gradient accumulation: variable used twice ---
 
 func TestGradientAccumulation(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// loss = sum(x * x) = sum(x²)
 	// dL/dx = 2x = [2, 4, 6]
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -255,7 +264,8 @@ func TestGradientAccumulation(t *testing.T) {
 // --- NoGrad context ---
 
 func TestNoGrad(t *testing.T) {
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -272,9 +282,10 @@ func TestNoGrad(t *testing.T) {
 // --- Variable without grad ---
 
 func TestNoGradVariable(t *testing.T) {
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
-	yt, _ := tensor.FromFloat32([]float32{4, 5, 6}, []int64{3})
+	yt, _ := tensor.FromFloat32([]float32{4, 5, 6}, []int64{3}, tensor.WithDevice(testDevice))
 	defer yt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -298,7 +309,8 @@ func TestNoGradVariable(t *testing.T) {
 // --- Detach ---
 
 func TestDetach(t *testing.T) {
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -316,9 +328,10 @@ func TestDetach(t *testing.T) {
 // --- ZeroGrad ---
 
 func TestZeroGrad(t *testing.T) {
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
-	yt, _ := tensor.FromFloat32([]float32{4, 5, 6}, []int64{3})
+	yt, _ := tensor.FromFloat32([]float32{4, 5, 6}, []int64{3}, tensor.WithDevice(testDevice))
 	defer yt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -347,12 +360,13 @@ func TestZeroGrad(t *testing.T) {
 // --- Broadcast: add with different shapes ---
 
 func TestBroadcastAddBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// x [2,3] + b [1,3] → result [2,3]
 	// dL/db should be sum over dim 0 = [1, 1, 1] * 2 rows = [2, 2, 2]?
 	// No: dL/dz = ones [2,3], unbroadcast to [1,3] → sum dim 0 = [2, 2, 2]
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
-	bt, _ := tensor.FromFloat32([]float32{0.1, 0.2, 0.3}, []int64{1, 3})
+	bt, _ := tensor.FromFloat32([]float32{0.1, 0.2, 0.3}, []int64{1, 3}, tensor.WithDevice(testDevice))
 	defer bt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -372,9 +386,10 @@ func TestBroadcastAddBackward(t *testing.T) {
 // --- Narrow ---
 
 func TestNarrowForward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// x = [1, 2, 3, 4, 5]
 	// narrow(dim=0, start=1, length=3) = [2, 3, 4]
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5}, []int64{5})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5}, []int64{5}, tensor.WithDevice(testDevice))
 	defer xt.Release()
 
 	x := autograd.NewVariable(xt, false)
@@ -383,9 +398,10 @@ func TestNarrowForward(t *testing.T) {
 }
 
 func TestNarrowBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// x [2, 4], narrow(dim=1, start=1, length=2) → [2, 2]
 	// loss = sum(narrow) → grad at positions [1:3] = 1, rest = 0
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6, 7, 8}, []int64{2, 4})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6, 7, 8}, []int64{2, 4}, tensor.WithDevice(testDevice))
 	defer xt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -399,9 +415,10 @@ func TestNarrowBackward(t *testing.T) {
 // --- Cat ---
 
 func TestCatForward(t *testing.T) {
-	at, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3})
+	skipIfDeviceUnavailable(t)
+	at, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3}, tensor.WithDevice(testDevice))
 	defer at.Release()
-	bt, _ := tensor.FromFloat32([]float32{4, 5}, []int64{1, 2})
+	bt, _ := tensor.FromFloat32([]float32{4, 5}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	defer bt.Release()
 
 	a := autograd.NewVariable(at, false)
@@ -416,11 +433,12 @@ func TestCatForward(t *testing.T) {
 }
 
 func TestCatBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// cat([a, b], dim=1), loss = sum
 	// grad should split correctly
-	at, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	at, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	defer at.Release()
-	bt, _ := tensor.FromFloat32([]float32{7, 8, 9, 10}, []int64{2, 2})
+	bt, _ := tensor.FromFloat32([]float32{7, 8, 9, 10}, []int64{2, 2}, tensor.WithDevice(testDevice))
 	defer bt.Release()
 
 	a := autograd.NewVariable(at, true)
@@ -437,10 +455,11 @@ func TestCatBackward(t *testing.T) {
 }
 
 func TestCatNarrowRoundtrip(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Cat two tensors, then narrow back → should recover originals
-	at, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3})
+	at, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3}, tensor.WithDevice(testDevice))
 	defer at.Release()
-	bt, _ := tensor.FromFloat32([]float32{4, 5}, []int64{1, 2})
+	bt, _ := tensor.FromFloat32([]float32{4, 5}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	defer bt.Release()
 
 	a := autograd.NewVariable(at, true)
@@ -466,9 +485,10 @@ func TestCatNarrowRoundtrip(t *testing.T) {
 // --- MulScalar ---
 
 func TestMulScalarBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// z = x * 3, loss = sum(z)
 	// dL/dx = [3, 3, 3]
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -483,10 +503,11 @@ func TestMulScalarBackward(t *testing.T) {
 // --- MeanDim ---
 
 func TestMeanDimForward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// x = [[1, 2, 3], [4, 5, 6]]  shape [2, 3]
 	// mean(dim=1) = [2, 5]
 	// mean(dim=0) = [2.5, 3.5, 4.5]
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
 
 	x := autograd.NewVariable(xt, false)
@@ -506,10 +527,11 @@ func TestMeanDimForward(t *testing.T) {
 }
 
 func TestMeanDimBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// x [2, 3], loss = sum(mean(x, dim=1))
 	// mean(dim=1) reduces 3→1, so grad = 1/3 for each element
 	// dL/d(mean) = [1, 1], dL/dx = [[1/3, 1/3, 1/3], [1/3, 1/3, 1/3]]
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -526,8 +548,9 @@ func TestMeanDimBackward(t *testing.T) {
 }
 
 func TestMeanDimKeepDimBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Same test with keepdim=true — should produce identical gradients
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	defer xt.Release()
 
 	x := autograd.NewVariable(xt, true)
@@ -546,12 +569,13 @@ func TestMeanDimKeepDimBackward(t *testing.T) {
 // --- IndexSelect ---
 
 func TestIndexSelectForward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// weight = [[10, 11], [20, 21], [30, 31], [40, 41]]  shape [4, 2]
 	// indices = [2, 0, 3]
 	// result = [[30, 31], [10, 11], [40, 41]]  shape [3, 2]
-	wt, _ := tensor.FromFloat32([]float32{10, 11, 20, 21, 30, 31, 40, 41}, []int64{4, 2})
+	wt, _ := tensor.FromFloat32([]float32{10, 11, 20, 21, 30, 31, 40, 41}, []int64{4, 2}, tensor.WithDevice(testDevice))
 	defer wt.Release()
-	idx, _ := tensor.FromInt64([]int64{2, 0, 3}, []int64{3})
+	idx, _ := tensor.FromInt64([]int64{2, 0, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	defer idx.Release()
 
 	w := autograd.NewVariable(wt, false)
@@ -568,15 +592,16 @@ func TestIndexSelectForward(t *testing.T) {
 }
 
 func TestIndexSelectBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// weight [4, 2], select indices [1, 1, 3] → output [3, 2]
 	// loss = sum(output)
 	// grad_output = ones [3, 2]
 	// grad_weight: row 1 gets 2 contributions (index 1 appears twice),
 	//              row 3 gets 1 contribution
 	//              rows 0, 2 get 0
-	wt, _ := tensor.FromFloat32([]float32{10, 11, 20, 21, 30, 31, 40, 41}, []int64{4, 2})
+	wt, _ := tensor.FromFloat32([]float32{10, 11, 20, 21, 30, 31, 40, 41}, []int64{4, 2}, tensor.WithDevice(testDevice))
 	defer wt.Release()
-	idx, _ := tensor.FromInt64([]int64{1, 1, 3}, []int64{3})
+	idx, _ := tensor.FromInt64([]int64{1, 1, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	defer idx.Release()
 
 	w := autograd.NewVariable(wt, true)
@@ -590,8 +615,9 @@ func TestIndexSelectBackward(t *testing.T) {
 }
 
 func TestVariableItem(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Scalar-like variable (1 element).
-	st, _ := tensor.FromFloat32([]float32{3.14}, []int64{1})
+	st, _ := tensor.FromFloat32([]float32{3.14}, []int64{1}, tensor.WithDevice(testDevice))
 	v := autograd.NewVariable(st, false)
 	got := v.Item()
 	if got < 3.139 || got > 3.141 {
@@ -599,7 +625,7 @@ func TestVariableItem(t *testing.T) {
 	}
 
 	// Multi-element — extracts first element.
-	mt, _ := tensor.FromFloat32([]float32{42, 7}, []int64{2})
+	mt, _ := tensor.FromFloat32([]float32{42, 7}, []int64{2}, tensor.WithDevice(testDevice))
 	v2 := autograd.NewVariable(mt, false)
 	if v2.Item() != 42 {
 		t.Errorf("Item() = %f, want 42", v2.Item())
@@ -607,25 +633,27 @@ func TestVariableItem(t *testing.T) {
 }
 
 func TestVariableToDeviceSameDevice(t *testing.T) {
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	v := autograd.NewVariable(xt, true)
-	moved := v.ToDevice(tensor.CPU)
+	moved := v.ToDevice(testDevice)
 	// Same device — should return same variable.
 	if moved != v {
-		t.Error("ToDevice(CPU) on CPU variable should return same variable")
+		t.Errorf("ToDevice(%v) on %v variable should return same variable", testDevice, testDevice)
 	}
 }
 
 func TestVariableToDevicePreservesGrad(t *testing.T) {
-	xt, _ := tensor.FromFloat32([]float32{1, 2}, []int64{2})
+	skipIfDeviceUnavailable(t)
+	xt, _ := tensor.FromFloat32([]float32{1, 2}, []int64{2}, tensor.WithDevice(testDevice))
 	v := autograd.NewVariable(xt, true)
-	moved := v.ToDevice(tensor.CPU)
+	moved := v.ToDevice(testDevice)
 	if !moved.RequiresGrad() {
 		t.Error("ToDevice should preserve requiresGrad=true")
 	}
 
 	v2 := autograd.NewVariable(xt, false)
-	moved2 := v2.ToDevice(tensor.CPU)
+	moved2 := v2.ToDevice(testDevice)
 	if moved2.RequiresGrad() {
 		t.Error("ToDevice should preserve requiresGrad=false")
 	}
@@ -634,10 +662,11 @@ func TestVariableToDevicePreservesGrad(t *testing.T) {
 // TestBackwardReleasesSavedTensors verifies that backward frees saved-for-
 // backward tensors deterministically via refcounting, without waiting for GC.
 func TestBackwardReleasesSavedTensors(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Build: loss = sum(sigmoid(x * w))
 	// Mul saves x.data and w.data; Sigmoid saves its output.
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2})
-	wt, _ := tensor.FromFloat32([]float32{0.1, 0.2, 0.3, 0.4}, []int64{2, 2})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2}, tensor.WithDevice(testDevice))
+	wt, _ := tensor.FromFloat32([]float32{0.1, 0.2, 0.3, 0.4}, []int64{2, 2}, tensor.WithDevice(testDevice))
 
 	x := autograd.NewVariable(xt, true)
 	w := autograd.NewVariable(wt, true)

@@ -9,12 +9,13 @@ import (
 )
 
 func makeTagGroupInput() *autograd.Variable {
-	t, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4})
+	t, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4}, tensor.WithDevice(testDevice))
 	return autograd.NewVariable(t, false)
 }
 
 // TestTagGroupBasic verifies TagGroup creates suffixed tags and registers the group.
 func TestTagGroupBasic(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 4)).
 		Split(nn.MustLinear(4, 4), nn.MustLinear(4, 4), nn.MustLinear(4, 4)).TagGroup("head").
 		Merge(Mean()).
@@ -43,6 +44,7 @@ func TestTagGroupBasic(t *testing.T) {
 
 // TestTagGroupTaggedOutputs verifies that suffixed tags capture outputs during Forward.
 func TestTagGroupTaggedOutputs(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 4)).
 		Split(nn.MustLinear(4, 4), nn.MustLinear(4, 4)).TagGroup("branch").
 		Merge(Mean()).
@@ -50,6 +52,7 @@ func TestTagGroupTaggedOutputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.Forward(makeTagGroupInput())
 
@@ -62,6 +65,7 @@ func TestTagGroupTaggedOutputs(t *testing.T) {
 
 // TestTagGroupObservation verifies Collect/Flush/Trend work with suffixed tags.
 func TestTagGroupObservation(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 4)).
 		Split(nn.MustLinear(4, 1), nn.MustLinear(4, 1)).TagGroup("head").
 		Merge(Mean()).
@@ -69,6 +73,7 @@ func TestTagGroupObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	for epoch := 0; epoch < 3; epoch++ {
 		g.Forward(makeTagGroupInput())
@@ -86,6 +91,7 @@ func TestTagGroupObservation(t *testing.T) {
 
 // TestTagGroupSingleStreamError verifies TagGroup fails on single stream.
 func TestTagGroupSingleStreamError(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	_, err := From(nn.MustLinear(4, 4)).
 		TagGroup("fail").
 		Through(nn.MustLinear(4, 2)).
@@ -101,6 +107,7 @@ func TestTagGroupSingleStreamError(t *testing.T) {
 
 // TestTagGroupDuplicateError verifies duplicate group name is caught.
 func TestTagGroupDuplicateError(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	_, err := From(nn.MustLinear(4, 4)).
 		Split(nn.MustLinear(4, 4), nn.MustLinear(4, 4)).TagGroup("dup").
 		Merge(Mean()).
@@ -117,6 +124,7 @@ func TestTagGroupDuplicateError(t *testing.T) {
 
 // TestTagGroupConflictWithTag verifies group name collision with existing Tag.
 func TestTagGroupConflictWithTag(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	_, err := From(nn.MustLinear(4, 4)).Tag("head").
 		Split(nn.MustLinear(4, 4), nn.MustLinear(4, 4)).TagGroup("head").
 		Merge(Mean()).
@@ -131,6 +139,7 @@ func TestTagGroupConflictWithTag(t *testing.T) {
 
 // TestTagGroupSuffixConflictWithTag verifies suffixed name collision with existing Tag.
 func TestTagGroupSuffixConflictWithTag(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	_, err := From(nn.MustLinear(4, 4)).
 		Split(nn.MustLinear(4, 4), nn.MustLinear(4, 4)).Merge(Mean()).Tag("head_0").
 		Split(nn.MustLinear(4, 4), nn.MustLinear(4, 4)).TagGroup("head").
@@ -146,6 +155,7 @@ func TestTagGroupSuffixConflictWithTag(t *testing.T) {
 
 // TestTagGroupTiming verifies timing profiling works with TagGroup.
 func TestTagGroupTiming(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 4)).
 		Split(nn.MustLinear(4, 4), nn.MustLinear(4, 4)).TagGroup("head").
 		Merge(Mean()).
@@ -153,6 +163,7 @@ func TestTagGroupTiming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	g.Forward(makeTagGroupInput())
@@ -167,6 +178,7 @@ func TestTagGroupTiming(t *testing.T) {
 
 // TestTagGroupParametersByTag verifies ParametersByTag works with suffixed tags.
 func TestTagGroupParametersByTag(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 4)).
 		Split(nn.MustLinear(4, 4), nn.MustLinear(4, 4)).TagGroup("branch").
 		Merge(Mean()).
@@ -187,6 +199,7 @@ func TestTagGroupParametersByTag(t *testing.T) {
 
 // TestTagGroupFreeze verifies Freeze/Unfreeze work with suffixed tags.
 func TestTagGroupFreeze(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 4)).
 		Split(nn.MustLinear(4, 4), nn.MustLinear(4, 4)).TagGroup("branch").
 		Merge(Mean()).
@@ -194,6 +207,7 @@ func TestTagGroupFreeze(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.Freeze("branch_0", "branch_1")
 	g.Forward(makeTagGroupInput())

@@ -57,8 +57,8 @@ ENV CGO_CFLAGS="-I${LIBTORCH_PATH}/include -I${LIBTORCH_PATH}/include/torch/csrc
 ENV CGO_LDFLAGS="-L${LIBTORCH_PATH}/lib"
 ENV CGO_ENABLED=1
 
-# Build tag for backend selection — Go source links CUDA libs only with -tags cuda
-ENV GOFLAGS="-tags=cuda"
+# No global GOFLAGS — pass -tags cuda explicitly via make targets.
+# This allows make test-cpu (no CUDA) and make test (with CUDA) in the same image.
 
 # --- Layer 6: Dev tools (changes on version bump) ---
 ARG GOLANGCI_LINT_VERSION=v2.1.6

@@ -7,6 +7,6 @@
 
 package libtorch
 
-// #cgo CXXFLAGS: -DGODL_CUDA=1 -I/usr/local/cuda/include
+// #cgo CXXFLAGS: -DGODL_BUILD_CUDA=1 -I/usr/local/cuda/include
 // #cgo LDFLAGS: -Wl,--no-as-needed -ltorch_cuda -lc10_cuda
 import "C"

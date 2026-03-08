@@ -10,16 +10,19 @@ import (
 )
 
 func makeProfileInput() *autograd.Variable {
-	t, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4})
+	t, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4}, tensor.WithDevice(testDevice))
 	return autograd.NewVariable(t, false)
 }
 
 // TestProfilingDisabledByDefault verifies no overhead when profiling is off.
 func TestProfilingDisabledByDefault(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	g, err := From(nn.MustLinear(4, 2)).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.Forward(makeProfileInput())
 
@@ -36,6 +39,8 @@ func TestProfilingDisabledByDefault(t *testing.T) {
 
 // TestProfilingBasic verifies per-node and per-level timing is recorded.
 func TestProfilingBasic(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l1, _ := nn.NewLinear(4, 4)
 	l2, _ := nn.NewLinear(4, 2)
 
@@ -46,6 +51,7 @@ func TestProfilingBasic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	g.Forward(makeProfileInput())
@@ -100,6 +106,8 @@ func TestProfilingBasic(t *testing.T) {
 // TestProfilingParallelism verifies that parallel levels report
 // meaningful parallelism metrics.
 func TestProfilingParallelism(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	g, err := From(nn.MustLinear(4, 4)).
 		Split(nn.MustLinear(4, 4), nn.MustLinear(4, 4), nn.MustLinear(4, 4)).
 		Merge(Mean()).
@@ -108,6 +116,7 @@ func TestProfilingParallelism(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	g.Forward(makeProfileInput())
@@ -154,10 +163,13 @@ func TestProfilingSingleNodeParallelism(t *testing.T) {
 
 // TestProfilingDisableClears verifies that DisableProfiling clears state.
 func TestProfilingDisableClears(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	g, err := From(nn.MustLinear(4, 2)).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	g.Forward(makeProfileInput())
@@ -174,10 +186,13 @@ func TestProfilingDisableClears(t *testing.T) {
 // TestProfilingUpdatesEachForward verifies that Profile is replaced
 // on each Forward call.
 func TestProfilingUpdatesEachForward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	g, err := From(nn.MustLinear(4, 2)).Tag("out").Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	g.Forward(makeProfileInput())
@@ -193,10 +208,13 @@ func TestProfilingUpdatesEachForward(t *testing.T) {
 
 // TestProfilingHook verifies OnProfile is called after each Forward.
 func TestProfilingHook(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	g, err := From(nn.MustLinear(4, 2)).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	var hookCalled bool
 	var hookProfile *Profile
@@ -224,12 +242,15 @@ func TestProfilingHook(t *testing.T) {
 
 // TestProfileString verifies the human-readable output.
 func TestProfileString(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	g, err := From(nn.MustLinear(4, 4)).Tag("encoder").
 		Through(nn.MustLinear(4, 2)).Tag("decoder").
 		Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	g.Forward(makeProfileInput())
@@ -259,10 +280,13 @@ func TestProfileStringNil(t *testing.T) {
 
 // TestTimingCollectFlushTrend verifies the full timing trend pipeline.
 func TestTimingCollectFlushTrend(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	g, err := From(nn.MustLinear(4, 2)).Tag("layer").Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 
@@ -290,12 +314,15 @@ func TestTimingCollectFlushTrend(t *testing.T) {
 
 // TestTimingCollectAll verifies CollectTimings with no args collects all tags.
 func TestTimingCollectAll(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	g, err := From(nn.MustLinear(4, 4)).Tag("a").
 		Through(nn.MustLinear(4, 2)).Tag("b").
 		Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	g.Forward(makeProfileInput())
@@ -312,10 +339,13 @@ func TestTimingCollectAll(t *testing.T) {
 
 // TestResetTimingTrend verifies clearing timing history.
 func TestResetTimingTrend(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	g, err := From(nn.MustLinear(4, 2)).Tag("x").Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	g.Forward(makeProfileInput())
@@ -334,12 +364,15 @@ func TestResetTimingTrend(t *testing.T) {
 
 // TestResetTimingTrendAll verifies clearing all timing history.
 func TestResetTimingTrendAll(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	g, err := From(nn.MustLinear(4, 4)).Tag("a").
 		Through(nn.MustLinear(4, 2)).Tag("b").
 		Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	g.Forward(makeProfileInput())
@@ -354,6 +387,8 @@ func TestResetTimingTrendAll(t *testing.T) {
 
 // TestProfilingWithLoop verifies that loop nodes are timed as a whole.
 func TestProfilingWithLoop(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	body := &ctxCounter{}
 	g, err := From(body).
 		Loop(body).For(10).Tag("loop").
@@ -361,9 +396,10 @@ func TestProfilingWithLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
-	input, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1})
+	input, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(input, false))
 
 	loopTime := g.Timing("loop")

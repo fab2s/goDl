@@ -941,7 +941,7 @@ extern "C" int godl_cuda_device_count(void) {
 
 static void (*godl_gc_callback)(void) = nullptr;
 
-#ifdef GODL_CUDA
+#ifdef GODL_BUILD_CUDA
 #include <c10/cuda/CUDACachingAllocator.h>
 
 namespace c10 {

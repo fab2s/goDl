@@ -19,11 +19,11 @@ type rangeDataset struct {
 func (d *rangeDataset) Len() int { return d.n }
 
 func (d *rangeDataset) Get(index int) (input, target *tensor.Tensor, err error) {
-	inp, err := tensor.FromFloat32([]float32{float32(index)}, []int64{1})
+	inp, err := tensor.FromFloat32([]float32{float32(index)}, []int64{1}, tensor.WithDevice(testDevice))
 	if err != nil {
 		return nil, nil, err
 	}
-	tgt, err := tensor.FromFloat32([]float32{float32(index * 10)}, []int64{1})
+	tgt, err := tensor.FromFloat32([]float32{float32(index * 10)}, []int64{1}, tensor.WithDevice(testDevice))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -33,11 +33,12 @@ func (d *rangeDataset) Get(index int) (input, target *tensor.Tensor, err error) 
 // --- tensor.Stack ---
 
 func TestStack(t *testing.T) {
-	a, _ := tensor.FromFloat32([]float32{1, 2}, []int64{2})
+	skipIfDeviceUnavailable(t)
+	a, _ := tensor.FromFloat32([]float32{1, 2}, []int64{2}, tensor.WithDevice(testDevice))
 	defer a.Release()
-	b, _ := tensor.FromFloat32([]float32{3, 4}, []int64{2})
+	b, _ := tensor.FromFloat32([]float32{3, 4}, []int64{2}, tensor.WithDevice(testDevice))
 	defer b.Release()
-	c, _ := tensor.FromFloat32([]float32{5, 6}, []int64{2})
+	c, _ := tensor.FromFloat32([]float32{5, 6}, []int64{2}, tensor.WithDevice(testDevice))
 	defer c.Release()
 
 	s := tensor.Stack([]*tensor.Tensor{a, b, c}, 0)
@@ -59,9 +60,10 @@ func TestStack(t *testing.T) {
 }
 
 func TestStackDim1(t *testing.T) {
-	a, _ := tensor.FromFloat32([]float32{1, 2}, []int64{2})
+	skipIfDeviceUnavailable(t)
+	a, _ := tensor.FromFloat32([]float32{1, 2}, []int64{2}, tensor.WithDevice(testDevice))
 	defer a.Release()
-	b, _ := tensor.FromFloat32([]float32{3, 4}, []int64{2})
+	b, _ := tensor.FromFloat32([]float32{3, 4}, []int64{2}, tensor.WithDevice(testDevice))
 	defer b.Release()
 
 	s := tensor.Stack([]*tensor.Tensor{a, b}, 1)
@@ -85,6 +87,7 @@ func TestStackDim1(t *testing.T) {
 }
 
 func TestStackEmpty(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	s := tensor.Stack(nil, 0)
 	if s.Err() == nil {
 		t.Fatal("expected error from empty Stack")
@@ -94,9 +97,10 @@ func TestStackEmpty(t *testing.T) {
 // --- TensorDataset ---
 
 func TestTensorDataset(t *testing.T) {
-	inputs, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{3, 2})
+	skipIfDeviceUnavailable(t)
+	inputs, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{3, 2}, tensor.WithDevice(testDevice))
 	defer inputs.Release()
-	targets, _ := tensor.FromFloat32([]float32{10, 20, 30}, []int64{3})
+	targets, _ := tensor.FromFloat32([]float32{10, 20, 30}, []int64{3}, tensor.WithDevice(testDevice))
 	defer targets.Release()
 
 	ds := data.NewTensorDataset(inputs, targets)
@@ -124,6 +128,7 @@ func TestTensorDataset(t *testing.T) {
 // --- Loader sequential ---
 
 func TestLoaderBasic(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	ds := &rangeDataset{n: 10}
 	loader := data.NewLoader(ds, data.LoaderConfig{BatchSize: 3})
 	defer loader.Close()
@@ -159,6 +164,7 @@ func TestLoaderBasic(t *testing.T) {
 }
 
 func TestLoaderDropLast(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	ds := &rangeDataset{n: 10}
 	loader := data.NewLoader(ds, data.LoaderConfig{BatchSize: 3, DropLast: true})
 	defer loader.Close()
@@ -173,6 +179,7 @@ func TestLoaderDropLast(t *testing.T) {
 }
 
 func TestLoaderShuffle(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	ds := &rangeDataset{n: 100}
 	loader := data.NewLoader(ds, data.LoaderConfig{BatchSize: 100, Shuffle: true})
 	defer loader.Close()
@@ -197,6 +204,7 @@ func TestLoaderShuffle(t *testing.T) {
 }
 
 func TestLoaderReset(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	ds := &rangeDataset{n: 5}
 	loader := data.NewLoader(ds, data.LoaderConfig{BatchSize: 5})
 	defer loader.Close()
@@ -219,6 +227,7 @@ func TestLoaderReset(t *testing.T) {
 // --- Loader parallel ---
 
 func TestLoaderParallel(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	ds := &rangeDataset{n: 20}
 	loader := data.NewLoader(ds, data.LoaderConfig{
 		BatchSize:  4,
@@ -262,6 +271,7 @@ func TestLoaderParallel(t *testing.T) {
 }
 
 func TestLoaderParallelShuffle(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	ds := &rangeDataset{n: 50}
 	loader := data.NewLoader(ds, data.LoaderConfig{
 		BatchSize:  50,
@@ -291,6 +301,7 @@ func TestLoaderParallelShuffle(t *testing.T) {
 }
 
 func TestLoaderParallelReset(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	ds := &rangeDataset{n: 8}
 	loader := data.NewLoader(ds, data.LoaderConfig{
 		BatchSize:  4,
@@ -331,11 +342,11 @@ func (d *errorDataset) Get(index int) (input, target *tensor.Tensor, err error) 
 	if index == d.failAt {
 		return nil, nil, fmt.Errorf("dataset: synthetic error at index %d", index)
 	}
-	inp, err := tensor.FromFloat32([]float32{float32(index)}, []int64{1})
+	inp, err := tensor.FromFloat32([]float32{float32(index)}, []int64{1}, tensor.WithDevice(testDevice))
 	if err != nil {
 		return nil, nil, err
 	}
-	tgt, err := tensor.FromFloat32([]float32{0}, []int64{1})
+	tgt, err := tensor.FromFloat32([]float32{0}, []int64{1}, tensor.WithDevice(testDevice))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -343,6 +354,7 @@ func (d *errorDataset) Get(index int) (input, target *tensor.Tensor, err error) 
 }
 
 func TestLoaderErrorPropagation(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	ds := &errorDataset{n: 10, failAt: 5}
 	loader := data.NewLoader(ds, data.LoaderConfig{BatchSize: 3})
 	defer loader.Close()
@@ -364,20 +376,21 @@ func TestLoaderErrorPropagation(t *testing.T) {
 // --- Device placement ---
 
 func TestLoaderDeviceCPU(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	ds := &rangeDataset{n: 6}
 	loader := data.NewLoader(ds, data.LoaderConfig{
 		BatchSize: 3,
-		Device:    tensor.DevicePtr(tensor.CPU),
+		Device:    tensor.DevicePtr(testDevice),
 	})
 	defer loader.Close()
 
 	for loader.Next() {
 		input, target := loader.Batch()
-		if input.Device() != tensor.CPU {
-			t.Errorf("input on %v, want CPU", input.Device())
+		if input.Device() != testDevice {
+			t.Errorf("input on %v, want %v", input.Device(), testDevice)
 		}
-		if target.Device() != tensor.CPU {
-			t.Errorf("target on %v, want CPU", target.Device())
+		if target.Device() != testDevice {
+			t.Errorf("target on %v, want %v", target.Device(), testDevice)
 		}
 	}
 	if err := loader.Err(); err != nil {
@@ -386,6 +399,7 @@ func TestLoaderDeviceCPU(t *testing.T) {
 }
 
 func TestLoaderDeviceNil(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Device=nil should not alter batch behavior.
 	ds := &rangeDataset{n: 6}
 	loader := data.NewLoader(ds, data.LoaderConfig{
@@ -396,8 +410,8 @@ func TestLoaderDeviceNil(t *testing.T) {
 	batches := 0
 	for loader.Next() {
 		input, _ := loader.Batch()
-		if input.Device() != tensor.CPU {
-			t.Errorf("expected CPU when Device is nil")
+		if input.Device() != testDevice {
+			t.Errorf("expected %v when Device is nil, got %v", testDevice, input.Device())
 		}
 		batches++
 	}
@@ -407,21 +421,22 @@ func TestLoaderDeviceNil(t *testing.T) {
 }
 
 func TestLoaderDeviceParallel(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	ds := &rangeDataset{n: 8}
 	loader := data.NewLoader(ds, data.LoaderConfig{
 		BatchSize:  4,
 		NumWorkers: 2,
-		Device:     tensor.DevicePtr(tensor.CPU),
+		Device:     tensor.DevicePtr(testDevice),
 	})
 	defer loader.Close()
 
 	for loader.Next() {
 		input, target := loader.Batch()
-		if input.Device() != tensor.CPU {
-			t.Errorf("parallel input on %v, want CPU", input.Device())
+		if input.Device() != testDevice {
+			t.Errorf("parallel input on %v, want %v", input.Device(), testDevice)
 		}
-		if target.Device() != tensor.CPU {
-			t.Errorf("parallel target on %v, want CPU", target.Device())
+		if target.Device() != testDevice {
+			t.Errorf("parallel target on %v, want %v", target.Device(), testDevice)
 		}
 	}
 	if err := loader.Err(); err != nil {

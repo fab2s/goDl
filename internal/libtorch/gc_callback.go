@@ -6,15 +6,24 @@
 // GoDlGCCallback which calls goTriggerGC via a function pointer.
 //
 // goTriggerGC triggers Go's garbage collector to finalize unreachable
-// tensor wrappers, freeing their underlying VRAM. Because the allocator
-// holds a recursive mutex during the callback, Go finalizers (which run
-// on a separate goroutine/thread) cannot free tensors directly without
-// deadlocking. Instead, Free() queues handles into a pending list when
-// gcCallbackActive > 0, and goTriggerGC drains the list on the
-// allocator's thread where the recursive mutex allows re-entry.
+// tensor wrappers. Because the allocator holds a recursive mutex during
+// the callback, Go finalizers (which run on a separate goroutine/thread)
+// cannot free tensors directly without deadlocking. Instead, Free()
+// queues handles into a pending list when gcCallbackActive > 0.
+//
+// IMPORTANT: We do NOT drain the pending list during the callback.
+// The callback runs on the same thread and call stack as the CGo
+// operation that triggered the allocation. Draining would free tensor
+// handles that C++ code above us is still using — classic
+// use-after-free. Instead, the pending list is drained by the next
+// Free() call outside the callback context.
+//
+// The CUDA allocator has fallback mechanisms (cudaMalloc, releasing
+// all cached blocks) that handle the case where the callback doesn't
+// immediately reclaim memory.
 //
 // Cost: zero in the happy path — the callback only fires when VRAM is
-// genuinely exhausted. When it fires, ~2-10ms for GC + drain.
+// genuinely exhausted. When it fires, ~2ms for GC.
 package libtorch
 
 /*

@@ -26,6 +26,8 @@ func (m *ctxCounter) Parameters() []*nn.Parameter { return nil }
 // TestForwardCtx_Background verifies ForwardCtx with Background behaves
 // identically to Forward.
 func TestForwardCtx_Background(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l, _ := nn.NewLinear(2, 2)
 	setLinearWeights(l, identityN(2), []float32{0, 0})
 
@@ -33,8 +35,9 @@ func TestForwardCtx_Background(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	input, _ := tensor.FromFloat32([]float32{3, 4}, []int64{1, 2})
+	input, _ := tensor.FromFloat32([]float32{3, 4}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	v := autograd.NewVariable(input, false)
 
 	out1 := g.Forward(v)
@@ -50,6 +53,8 @@ func TestForwardCtx_Background(t *testing.T) {
 // TestForwardCtx_ForLoopCancel verifies that a For loop respects
 // context cancellation and stops early.
 func TestForwardCtx_ForLoopCancel(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	body := &ctxCounter{}
 	g, err := From(body).
 		Loop(body).For(1000).
@@ -57,11 +62,12 @@ func TestForwardCtx_ForLoopCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	input, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1})
+	input, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	result := g.ForwardCtx(ctx, autograd.NewVariable(input, false))
 
 	if result.Err() == nil {
@@ -79,6 +85,8 @@ func TestForwardCtx_ForLoopCancel(t *testing.T) {
 // TestForwardCtx_WhileLoopCancel verifies that a While loop respects
 // context cancellation.
 func TestForwardCtx_WhileLoopCancel(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	body := &ctxCounter{}
 	neverHalt := ThresholdHalt(1e9) // never halts naturally
 
@@ -88,11 +96,12 @@ func TestForwardCtx_WhileLoopCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	input, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1})
+	input, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	result := g.ForwardCtx(ctx, autograd.NewVariable(input, false))
 
 	if result.Err() == nil {
@@ -107,6 +116,8 @@ func TestForwardCtx_WhileLoopCancel(t *testing.T) {
 // context cancellation but still runs the body at least once (the
 // Until guarantee). Cancellation happens during the loop, not before.
 func TestForwardCtx_UntilLoopCancel(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -120,8 +131,9 @@ func TestForwardCtx_UntilLoopCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	input, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1})
+	input, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	result := g.ForwardCtx(ctx, autograd.NewVariable(input, false))
 
 	// Until guarantees at least one body execution in the loop.
@@ -142,6 +154,8 @@ func TestForwardCtx_UntilLoopCancel(t *testing.T) {
 // TestForwardCtx_MapCancel verifies that Map.Each respects context
 // cancellation and stops iterating early.
 func TestForwardCtx_MapCancel(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	body := &ctxCounter{}
 
 	g, err := From(body).
@@ -150,12 +164,13 @@ func TestForwardCtx_MapCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	// 100 elements along dim 0.
-	input, _ := tensor.FromFloat32(make([]float32, 100), []int64{100, 1})
+	input, _ := tensor.FromFloat32(make([]float32, 100), []int64{100, 1}, tensor.WithDevice(testDevice))
 	result := g.ForwardCtx(ctx, autograd.NewVariable(input, false))
 
 	if result.Err() == nil {
@@ -169,6 +184,8 @@ func TestForwardCtx_MapCancel(t *testing.T) {
 // TestForwardCtx_BetweenLevels verifies that context is checked between
 // topological levels.
 func TestForwardCtx_BetweenLevels(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Two-level graph: layer1 -> layer2
 	layer1 := &ctxCounter{}
 	layer2 := &ctxCounter{}
@@ -179,11 +196,12 @@ func TestForwardCtx_BetweenLevels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	input, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1})
+	input, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	result := g.ForwardCtx(ctx, autograd.NewVariable(input, false))
 
 	if result.Err() == nil {
@@ -197,6 +215,8 @@ func TestForwardCtx_BetweenLevels(t *testing.T) {
 // TestForwardCtx_NormalCompletion verifies that a non-cancelled context
 // lets the graph complete normally.
 func TestForwardCtx_NormalCompletion(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	body := &ctxCounter{}
 	g, err := From(body).
 		Loop(body).For(5).
@@ -204,8 +224,9 @@ func TestForwardCtx_NormalCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	input, _ := tensor.FromFloat32([]float32{42}, []int64{1, 1})
+	input, _ := tensor.FromFloat32([]float32{42}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	result := g.ForwardCtx(context.Background(), autograd.NewVariable(input, false))
 
 	if err := result.Err(); err != nil {
@@ -242,6 +263,8 @@ func (m *cancelAfterModule) Parameters() []*nn.Parameter { return nil }
 // TestForwardCtx_LoopPartialCancel verifies that a For loop can run
 // some iterations before cancellation.
 func TestForwardCtx_LoopPartialCancel(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -253,8 +276,9 @@ func TestForwardCtx_LoopPartialCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	input, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1})
+	input, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	result := g.ForwardCtx(ctx, autograd.NewVariable(input, false))
 
 	if result.Err() == nil {

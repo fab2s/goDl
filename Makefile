@@ -34,11 +34,11 @@ vet: image
 
 # Lint with golangci-lint
 lint: image
-	$(RUN) golangci-lint run ./...
+	$(RUN) golangci-lint run --build-tags cuda ./...
 
 # Lint and auto-fix (gofmt + golangci-lint)
 lint-fix: image
-	$(RUN) sh -c 'gofmt -w . && golangci-lint run --fix ./...'
+	$(RUN) sh -c 'gofmt -w . && golangci-lint run --build-tags cuda --fix ./...'
 
 # Documentation server (pkg.go.dev style) — open http://localhost:6060
 doc: image

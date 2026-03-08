@@ -16,7 +16,7 @@ import (
 func stepOptimizer(t *testing.T, params []*nn.Parameter, opt nn.Optimizer) {
 	t.Helper()
 	for _, p := range params {
-		grad, err := tensor.Ones(p.Data().Shape())
+		grad, err := tensor.Ones(p.Data().Shape(), tensor.WithDevice(testDevice))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -49,11 +49,11 @@ func assertClose(t *testing.T, label string, got, want []float32) {
 
 func makeParams(t *testing.T) []*nn.Parameter {
 	t.Helper()
-	w, err := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	w, err := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := tensor.FromFloat32([]float32{0.1, 0.2}, []int64{2})
+	b, err := tensor.FromFloat32([]float32{0.1, 0.2}, []int64{2}, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func cloneParamData(t *testing.T, dst, src []*nn.Parameter) {
 	t.Helper()
 	for i := range dst {
 		data := tensorData(t, src[i].Data())
-		clone, err := tensor.FromFloat32(data, src[i].Data().Shape())
+		clone, err := tensor.FromFloat32(data, src[i].Data().Shape(), tensor.WithDevice(testDevice))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -81,6 +81,7 @@ func cloneParamData(t *testing.T, dst, src []*nn.Parameter) {
 // --- SGD state ---
 
 func TestSGDSaveLoadState(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	params := makeParams(t)
 	opt := nn.NewSGD(params, 0.01, 0.9)
 
@@ -120,6 +121,7 @@ func TestSGDSaveLoadState(t *testing.T) {
 }
 
 func TestSGDSaveLoadStateNoMomentum(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	params := makeParams(t)
 	opt := nn.NewSGD(params, 0.01, 0) // no momentum
 
@@ -148,6 +150,7 @@ func TestSGDSaveLoadStateNoMomentum(t *testing.T) {
 // --- Adam state ---
 
 func TestAdamSaveLoadState(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	params := makeParams(t)
 	opt := nn.NewAdam(params, 0.001)
 
@@ -182,6 +185,7 @@ func TestAdamSaveLoadState(t *testing.T) {
 }
 
 func TestAdamSaveLoadStateBeforeFirstStep(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	params := makeParams(t)
 	opt := nn.NewAdam(params, 0.001)
 
@@ -209,6 +213,7 @@ func TestAdamSaveLoadStateBeforeFirstStep(t *testing.T) {
 // --- AdamW state ---
 
 func TestAdamWSaveLoadState(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	params := makeParams(t)
 	opt := nn.NewAdamW(params, 0.001, 0.01)
 
@@ -243,6 +248,7 @@ func TestAdamWSaveLoadState(t *testing.T) {
 // --- Scheduler state ---
 
 func TestStepDecaySchedulerSaveLoadState(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	opt := nn.NewAdam(makeParams(t), 0.1)
 	sched := nn.NewStepDecayScheduler(opt, 10, 0.5)
 
@@ -276,6 +282,7 @@ func TestStepDecaySchedulerSaveLoadState(t *testing.T) {
 }
 
 func TestCosineSchedulerSaveLoadState(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	opt := nn.NewAdam(makeParams(t), 0.1)
 	sched := nn.NewCosineScheduler(opt, 0.1, 0.001, 100)
 
@@ -303,6 +310,7 @@ func TestCosineSchedulerSaveLoadState(t *testing.T) {
 }
 
 func TestWarmupSchedulerSaveLoadState(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	opt := nn.NewAdam(makeParams(t), 0.1)
 	inner := nn.NewCosineScheduler(opt, 0.1, 0.001, 100)
 	sched := nn.NewWarmupScheduler(opt, inner, 0.1, 10)
@@ -336,6 +344,7 @@ func TestWarmupSchedulerSaveLoadState(t *testing.T) {
 }
 
 func TestPlateauSchedulerSaveLoadState(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	opt := nn.NewAdam(makeParams(t), 0.1)
 	sched := nn.NewPlateauScheduler(opt, 3, 0.5, 1e-6)
 
@@ -372,6 +381,7 @@ func TestPlateauSchedulerSaveLoadState(t *testing.T) {
 // --- GradScaler state ---
 
 func TestGradScalerSaveLoadState(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	scaler := nn.NewGradScaler()
 
 	// Simulate some updates to change state.
@@ -405,6 +415,7 @@ func TestGradScalerSaveLoadState(t *testing.T) {
 // --- Param count mismatch ---
 
 func TestAdamLoadStateMismatch(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	params := makeParams(t)
 	opt := nn.NewAdam(params, 0.001)
 	stepOptimizer(t, params, opt)
@@ -415,7 +426,7 @@ func TestAdamLoadStateMismatch(t *testing.T) {
 	}
 
 	// Try to load into optimizer with different param count.
-	w, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	w, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	singleParam := []*nn.Parameter{nn.NewParameter(w, "single")}
 	opt2 := nn.NewAdam(singleParam, 0.001)
 
@@ -427,6 +438,7 @@ func TestAdamLoadStateMismatch(t *testing.T) {
 // --- Checkpoint integration ---
 
 func TestCheckpointSaveLoad(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	dir := t.TempDir()
 
 	// Build a model.
@@ -434,14 +446,15 @@ func TestCheckpointSaveLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	moduleToDevice(linear)
 
 	opt := nn.NewAdam(linear.Parameters(), 0.001)
 	sched := nn.NewCosineScheduler(opt, 0.001, 0, 100)
 
 	// Train a few steps.
 	for range 10 {
-		xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3})
-		yt, _ := tensor.FromFloat32([]float32{1, 0}, []int64{1, 2})
+		xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3}, tensor.WithDevice(testDevice))
+		yt, _ := tensor.FromFloat32([]float32{1, 0}, []int64{1, 2}, tensor.WithDevice(testDevice))
 		pred := linear.Forward(autograd.NewVariable(xt, false))
 		loss := nn.MSELoss(pred, autograd.NewVariable(yt, false))
 		if err := loss.Backward(); err != nil {
@@ -471,6 +484,7 @@ func TestCheckpointSaveLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	moduleToDevice(linear2)
 	opt2 := nn.NewAdam(linear2.Parameters(), 0.1)
 	sched2 := nn.NewCosineScheduler(opt2, 0.001, 0, 100)
 
@@ -498,8 +512,8 @@ func TestCheckpointSaveLoad(t *testing.T) {
 	}
 
 	// Step both and compare — proves optimizer state (m, v, t) was restored.
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3})
-	yt, _ := tensor.FromFloat32([]float32{1, 0}, []int64{1, 2})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3}, tensor.WithDevice(testDevice))
+	yt, _ := tensor.FromFloat32([]float32{1, 0}, []int64{1, 2}, tensor.WithDevice(testDevice))
 
 	pred := linear.Forward(autograd.NewVariable(xt, false))
 	loss := nn.MSELoss(pred, autograd.NewVariable(yt, false))
@@ -508,8 +522,8 @@ func TestCheckpointSaveLoad(t *testing.T) {
 	}
 	opt.Step()
 
-	xt2, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3})
-	yt2, _ := tensor.FromFloat32([]float32{1, 0}, []int64{1, 2})
+	xt2, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3}, tensor.WithDevice(testDevice))
+	yt2, _ := tensor.FromFloat32([]float32{1, 0}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	pred2 := linear2.Forward(autograd.NewVariable(xt2, false))
 	loss2 := nn.MSELoss(pred2, autograd.NewVariable(yt2, false))
 	if err := loss2.Backward(); err != nil {
@@ -525,6 +539,7 @@ func TestCheckpointSaveLoad(t *testing.T) {
 }
 
 func TestCheckpointLoadEpoch(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	dir := t.TempDir()
 
 	linear, err := nn.NewLinear(2, 1)
@@ -561,6 +576,7 @@ func TestCheckpointLoadEpoch(t *testing.T) {
 }
 
 func TestCheckpointNoModel(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	dir := t.TempDir()
 
 	opt := nn.NewAdam(makeParams(t), 0.001)
@@ -588,6 +604,7 @@ func TestCheckpointNoModel(t *testing.T) {
 }
 
 func TestCheckpointStateMismatch(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	dir := t.TempDir()
 
 	opt := nn.NewAdam(makeParams(t), 0.001)
@@ -607,6 +624,7 @@ func TestCheckpointStateMismatch(t *testing.T) {
 }
 
 func TestCheckpointNameMismatch(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	dir := t.TempDir()
 
 	opt := nn.NewAdam(makeParams(t), 0.001)
@@ -624,6 +642,7 @@ func TestCheckpointNameMismatch(t *testing.T) {
 }
 
 func TestCheckpointNotFound(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	dir := t.TempDir()
 	ckpt := nn.NewCheckpoint(dir + "/nonexistent")
 	if _, err := ckpt.Load(); err == nil {

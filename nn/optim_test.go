@@ -12,12 +12,12 @@ import (
 // makeParam creates a parameter with known data and gradient.
 func makeParam(t *testing.T, data, grad []float32, shape []int64) *nn.Parameter {
 	t.Helper()
-	dt, err := tensor.FromFloat32(data, shape)
+	dt, err := tensor.FromFloat32(data, shape, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := nn.NewParameter(dt, "test")
-	gt, err := tensor.FromFloat32(grad, shape)
+	gt, err := tensor.FromFloat32(grad, shape, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +41,7 @@ func assertParamClose(t *testing.T, name string, p *nn.Parameter, want []float32
 // --- SGD without momentum ---
 
 func TestSGDVanillaExact(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// param = [1.0, 2.0, 3.0], grad = [0.1, 0.2, 0.3], lr = 0.5
 	// new_param = param - lr * grad = [1.0-0.05, 2.0-0.1, 3.0-0.15] = [0.95, 1.9, 2.85]
 	p := makeParam(t, []float32{1.0, 2.0, 3.0}, []float32{0.1, 0.2, 0.3}, []int64{3})
@@ -52,6 +53,7 @@ func TestSGDVanillaExact(t *testing.T) {
 // --- SGD with momentum ---
 
 func TestSGDMomentumExact(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// param = [1.0, 2.0], grad = [0.5, -0.5], lr = 0.1, momentum = 0.9
 	//
 	// Step 1: v_0 = grad = [0.5, -0.5] (first step clones grad as velocity)
@@ -63,7 +65,7 @@ func TestSGDMomentumExact(t *testing.T) {
 	assertParamClose(t, "SGD_mom_step1", p, []float32{0.95, 2.05})
 
 	// Step 2: new grad = [0.3, -0.3]
-	g2, _ := tensor.FromFloat32([]float32{0.3, -0.3}, []int64{2})
+	g2, _ := tensor.FromFloat32([]float32{0.3, -0.3}, []int64{2}, tensor.WithDevice(testDevice))
 	p.SetGrad(g2)
 	// v = 0.9 * [0.5, -0.5] + [0.3, -0.3] = [0.75, -0.75]
 	// param -= 0.1 * [0.75, -0.75] = [0.95, 2.05] - [0.075, -0.075] = [0.875, 2.125]
@@ -74,6 +76,7 @@ func TestSGDMomentumExact(t *testing.T) {
 // --- SGD ZeroGrad ---
 
 func TestSGDZeroGrad(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	p := makeParam(t, []float32{1.0}, []float32{0.5}, []int64{1})
 	opt := nn.NewSGD([]*nn.Parameter{p}, 0.1, 0)
 	opt.ZeroGrad()
@@ -88,6 +91,7 @@ func TestSGDZeroGrad(t *testing.T) {
 // --- Adam single step ---
 
 func TestAdamExact(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// param = [1.0, 2.0], grad = [0.5, -0.5]
 	// lr=0.001, beta1=0.9, beta2=0.999, eps=1e-8
 	//
@@ -108,6 +112,7 @@ func TestAdamExact(t *testing.T) {
 // --- Adam two steps ---
 
 func TestAdamTwoStepsExact(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Verify bias correction changes between steps.
 	p := makeParam(t, []float32{1.0}, []float32{0.4}, []int64{1})
 	opt := nn.NewAdam([]*nn.Parameter{p}, 0.001)
@@ -123,7 +128,7 @@ func TestAdamTwoStepsExact(t *testing.T) {
 	assertParamClose(t, "Adam_2step_s1", p, []float32{0.999})
 
 	// Step 2: grad=0.2
-	g2, _ := tensor.FromFloat32([]float32{0.2}, []int64{1})
+	g2, _ := tensor.FromFloat32([]float32{0.2}, []int64{1}, tensor.WithDevice(testDevice))
 	p.SetGrad(g2)
 	// m = 0.9 * 0.04 + 0.1 * 0.2 = 0.036 + 0.02 = 0.056
 	// v = 0.999 * 0.00016 + 0.001 * 0.04 = 0.00015984 + 0.00004 = 0.00019984
@@ -148,6 +153,7 @@ func TestAdamTwoStepsExact(t *testing.T) {
 // --- Adam ZeroGrad ---
 
 func TestAdamZeroGrad(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	p := makeParam(t, []float32{1.0}, []float32{0.5}, []int64{1})
 	opt := nn.NewAdam([]*nn.Parameter{p}, 0.001)
 	opt.ZeroGrad()
@@ -159,6 +165,7 @@ func TestAdamZeroGrad(t *testing.T) {
 // --- AdamW single step ---
 
 func TestAdamWExact(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// param = [1.0, 2.0], grad = [0.5, -0.5]
 	// lr=0.001, beta1=0.9, beta2=0.999, eps=1e-8, wd=0.01
 	//
@@ -177,6 +184,7 @@ func TestAdamWExact(t *testing.T) {
 // --- AdamW two steps: verify decay accumulates correctly ---
 
 func TestAdamWTwoStepsExact(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Verify AdamW over two steps with exact hand-computed values.
 	p := makeParam(t, []float32{5.0}, []float32{0.5}, []int64{1})
 	lr, wd := 0.001, 0.01
@@ -194,7 +202,7 @@ func TestAdamWTwoStepsExact(t *testing.T) {
 	assertParamClose(t, "AdamW_2s_s1", p, []float32{float32(s1)})
 
 	// Step 2: grad=0.3
-	g2, _ := tensor.FromFloat32([]float32{0.3}, []int64{1})
+	g2, _ := tensor.FromFloat32([]float32{0.3}, []int64{1}, tensor.WithDevice(testDevice))
 	p.SetGrad(g2)
 	m := beta1*0.05 + (1-beta1)*0.3
 	v := beta2*0.00025 + (1-beta2)*0.09
@@ -210,6 +218,7 @@ func TestAdamWTwoStepsExact(t *testing.T) {
 // --- Multiple params ---
 
 func TestAdamMultipleParamsExact(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Verify optimizer handles multiple parameters independently.
 	p1 := makeParam(t, []float32{1.0, 2.0}, []float32{0.5, -0.5}, []int64{2})
 	p2 := makeParam(t, []float32{3.0}, []float32{0.1}, []int64{1})
@@ -232,8 +241,9 @@ func TestAdamMultipleParamsExact(t *testing.T) {
 // --- Nil grad skipped ---
 
 func TestAdamNilGradSkip(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	p1 := makeParam(t, []float32{1.0}, []float32{0.5}, []int64{1})
-	p2 := nn.NewParameter(func() *tensor.Tensor { t2, _ := tensor.FromFloat32([]float32{2.0}, []int64{1}); return t2 }(), "no_grad")
+	p2 := nn.NewParameter(func() *tensor.Tensor { t2, _ := tensor.FromFloat32([]float32{2.0}, []int64{1}, tensor.WithDevice(testDevice)); return t2 }(), "no_grad")
 	// p2 has no gradient set.
 	opt := nn.NewAdam([]*nn.Parameter{p1, p2}, 0.001)
 	opt.Step()
@@ -253,17 +263,18 @@ func TestAdamNilGradSkip(t *testing.T) {
 // --- End-to-end: optimizer on a real forward/backward ---
 
 func TestSGDEndToEndExact(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// y = x * w, loss = (y - target)^2
 	// x=2, w=1, target=4 → y=2, loss=(2-4)^2=4
 	// dy/dw = x = 2, dloss/dw = 2*(y-target)*x = 2*(-2)*2 = -8
 	// w_new = w - lr * grad = 1 - 0.1 * (-8) = 1.8
-	wt, _ := tensor.FromFloat32([]float32{1.0}, []int64{1})
+	wt, _ := tensor.FromFloat32([]float32{1.0}, []int64{1}, tensor.WithDevice(testDevice))
 	w := nn.NewParameter(wt, "w")
 	opt := nn.NewSGD([]*nn.Parameter{w}, 0.1, 0)
 
-	xt, _ := tensor.FromFloat32([]float32{2.0}, []int64{1})
+	xt, _ := tensor.FromFloat32([]float32{2.0}, []int64{1}, tensor.WithDevice(testDevice))
 	x := autograd.NewVariable(xt, false)
-	tt, _ := tensor.FromFloat32([]float32{4.0}, []int64{1})
+	tt, _ := tensor.FromFloat32([]float32{4.0}, []int64{1}, tensor.WithDevice(testDevice))
 	target := autograd.NewVariable(tt, false)
 
 	y := x.Mul(w.Variable)

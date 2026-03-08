@@ -11,7 +11,7 @@ import (
 // makeDummyOpt creates an Adam optimizer with a single parameter for scheduler tests.
 func makeDummyOpt(t *testing.T, lr float64) *nn.Adam {
 	t.Helper()
-	data, err := tensor.FromFloat32([]float32{1.0}, []int64{1})
+	data, err := tensor.FromFloat32([]float32{1.0}, []int64{1}, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,8 @@ func assertLRClose(t *testing.T, name string, got, want float64) {
 // --- LRAdjustable ---
 
 func TestSGDLRAdjustable(t *testing.T) {
-	data, _ := tensor.FromFloat32([]float32{1.0}, []int64{1})
+	skipIfDeviceUnavailable(t)
+	data, _ := tensor.FromFloat32([]float32{1.0}, []int64{1}, tensor.WithDevice(testDevice))
 	p := nn.NewParameter(data, "w")
 	opt := nn.NewSGD([]*nn.Parameter{p}, 0.01, 0)
 	assertLRClose(t, "initial", opt.LR(), 0.01)
@@ -38,6 +39,7 @@ func TestSGDLRAdjustable(t *testing.T) {
 }
 
 func TestAdamLRAdjustable(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	opt := makeDummyOpt(t, 0.001)
 	assertLRClose(t, "initial", opt.LR(), 0.001)
 	opt.SetLR(0.0005)
@@ -45,7 +47,8 @@ func TestAdamLRAdjustable(t *testing.T) {
 }
 
 func TestAdamWLRAdjustable(t *testing.T) {
-	data, _ := tensor.FromFloat32([]float32{1.0}, []int64{1})
+	skipIfDeviceUnavailable(t)
+	data, _ := tensor.FromFloat32([]float32{1.0}, []int64{1}, tensor.WithDevice(testDevice))
 	p := nn.NewParameter(data, "w")
 	opt := nn.NewAdamW([]*nn.Parameter{p}, 0.001, 0.01)
 	assertLRClose(t, "initial", opt.LR(), 0.001)
@@ -56,6 +59,7 @@ func TestAdamWLRAdjustable(t *testing.T) {
 // --- Step Decay ---
 
 func TestStepDecayScheduler(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	opt := makeDummyOpt(t, 0.1)
 	sched := nn.NewStepDecayScheduler(opt, 3, 0.5)
 
@@ -79,6 +83,7 @@ func TestStepDecayScheduler(t *testing.T) {
 // --- Cosine Annealing ---
 
 func TestCosineScheduler(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	opt := makeDummyOpt(t, 0.1)
 	baseLR := 0.1
 	minLR := 0.0
@@ -106,6 +111,7 @@ func TestCosineScheduler(t *testing.T) {
 }
 
 func TestCosineSchedulerWithMinLR(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	opt := makeDummyOpt(t, 0.1)
 	sched := nn.NewCosineScheduler(opt, 0.1, 0.01, 100)
 
@@ -118,6 +124,7 @@ func TestCosineSchedulerWithMinLR(t *testing.T) {
 // --- Linear Warmup ---
 
 func TestWarmupScheduler(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	opt := makeDummyOpt(t, 0.1)
 	targetLR := 0.1
 	warmup := 10
@@ -151,6 +158,7 @@ func TestWarmupScheduler(t *testing.T) {
 // --- Reduce on Plateau ---
 
 func TestPlateauScheduler(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	opt := makeDummyOpt(t, 0.1)
 	sched := nn.NewPlateauScheduler(opt, 3, 0.5, 1e-6)
 
@@ -177,6 +185,7 @@ func TestPlateauScheduler(t *testing.T) {
 }
 
 func TestPlateauSchedulerMinLR(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	opt := makeDummyOpt(t, 0.001)
 	sched := nn.NewPlateauScheduler(opt, 1, 0.1, 0.0005)
 
