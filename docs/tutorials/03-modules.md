@@ -177,7 +177,7 @@ before each Forward, passing the batch size from the input:
 
 ```go
 type Resettable interface {
-    Reset(batchSize int64)
+    Reset(batchSize int64, device tensor.Device)
 }
 ```
 

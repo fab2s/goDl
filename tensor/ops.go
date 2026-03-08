@@ -878,6 +878,17 @@ func (t *Tensor) Float() *Tensor {
 	return t.ToDType(Float32)
 }
 
+// Double casts the tensor to float64. Shorthand for ToDType(Float64).
+func (t *Tensor) Double() *Tensor {
+	return t.ToDType(Float64)
+}
+
+// ToInt64 casts the tensor to int64. Shorthand for ToDType(Int64).
+// Useful after comparison ops: caseLabel.GTScalar(0.5).ToInt64()
+func (t *Tensor) ToInt64() *Tensor {
+	return t.ToDType(Int64)
+}
+
 // AllFinite returns true if all elements are finite (no inf, no nan).
 func (t *Tensor) AllFinite() bool {
 	if !t.valid() {

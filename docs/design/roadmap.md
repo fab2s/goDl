@@ -278,7 +278,7 @@ outer, _ := From(inner).Through(l2).Build()  // inner graph is a node
 - **RefValidator**: build-time validation of Using ref contracts.
 - **Graph primitives**: `StateAdd`, `SoftmaxRouter`, `SigmoidRouter`, `Reshape`.
 - **Documentation**: 8 progressive tutorials, design docs, complete examples.
-- **Test coverage**: 459 tests including numerical gradient checks (autograd ops,
+- **Test coverage**: 460 tests including numerical gradient checks (autograd ops,
   all NN modules, exact optimizer step verification), all passing with race detector.
 
 ### Remaining

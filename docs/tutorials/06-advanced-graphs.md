@@ -309,13 +309,16 @@ implement `nn.Resettable`:
 
 ```go
 type Resettable interface {
-    Reset(batchSize int64)
+    Reset(batchSize int64, device tensor.Device)
 }
 ```
 
-The graph calls `Reset(batchSize)` on every `Resettable` module
+The graph calls `Reset(batchSize, device)` on every `Resettable` module
 before execution begins. The batch size is inferred from the first
-input tensor's leading dimension. No manual reset calls needed.
+input tensor, and the device comes from the graph's configured device
+(or the input's device if no device is set). Modules can create their
+internal state tensors directly on the correct device — no sniffing
+from parameter weights needed.
 
 ```go
 type AttentionStep struct {
@@ -323,8 +326,9 @@ type AttentionStep struct {
     // ...
 }
 
-func (s *AttentionStep) Reset(batchSize int64) {
-    s.location = zeros(batchSize, 2)
+func (s *AttentionStep) Reset(batchSize int64, device tensor.Device) {
+    locT, _ := tensor.Zeros([]int64{batchSize, 2}, tensor.WithDevice(device))
+    s.location = autograd.NewVariable(locT, false)
 }
 ```
 
@@ -538,8 +542,9 @@ type AttentionStep struct {
     location *autograd.Variable
 }
 
-func (s *AttentionStep) Reset(batchSize int64) {
-    s.location = zeros(batchSize, 2) // initial fixation at center
+func (s *AttentionStep) Reset(batchSize int64, device tensor.Device) {
+    locT, _ := tensor.Zeros([]int64{batchSize, 2}, tensor.WithDevice(device))
+    s.location = autograd.NewVariable(locT, false) // initial fixation at center
 }
 
 func (s *AttentionStep) Trace() *autograd.Variable {

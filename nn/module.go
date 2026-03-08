@@ -85,21 +85,22 @@ func SetTraining(m Module, training bool) {
 //
 // When a graph contains Resettable modules, [Graph.Forward] automatically
 // calls Reset on each one before execution, passing the batch size
-// inferred from the first input tensor.
+// inferred from the first input tensor and the graph's device.
 //
 //	type AttentionStep struct { location *autograd.Variable }
 //
-//	func (s *AttentionStep) Reset(batchSize int64) {
-//	    s.location = zeros(batchSize, 2)  // reinitialize state
+//	func (s *AttentionStep) Reset(batchSize int64, device tensor.Device) {
+//	    locT, _ := tensor.Zeros([]int64{batchSize, 2}, tensor.WithDevice(device))
+//	    s.location = autograd.NewVariable(locT, false)
 //	}
 type Resettable interface {
-	Reset(batchSize int64)
+	Reset(batchSize int64, device tensor.Device)
 }
 
 // Reset calls Reset on a module if it implements [Resettable].
-func Reset(m Module, batchSize int64) {
+func Reset(m Module, batchSize int64, device tensor.Device) {
 	if r, ok := m.(Resettable); ok {
-		r.Reset(batchSize)
+		r.Reset(batchSize, device)
 	}
 }
 

@@ -120,9 +120,9 @@ type Graph struct {
 	flushFunc     func(map[string]float64)            // Flush hook
 
 	// Flush timing — see observe.go ETA/Elapsed/FlushCount.
-	flushCount  int         // number of Flush calls
-	flushStart  time.Time   // timestamp of first Flush
-	flushTimes  []time.Time // timestamp of each Flush
+	flushCount    int         // number of Flush calls
+	trainingStart time.Time   // timestamp of first Forward (covers epoch 0)
+	flushTimes    []time.Time // timestamp of each Flush
 }
 
 // Forward executes the graph, routing variables along edges between nodes.
@@ -145,6 +145,11 @@ func (g *Graph) Forward(inputs ...*autograd.Variable) *autograd.Variable {
 func (g *Graph) ForwardCtx(ctx context.Context, inputs ...*autograd.Variable) *autograd.Variable {
 	g.execCtx.ctx = ctx
 	defer func() { g.execCtx.ctx = context.Background() }()
+
+	// Record training start on first forward — used by ETA to include epoch 0.
+	if g.trainingStart.IsZero() {
+		g.trainingStart = time.Now()
+	}
 
 	var forwardStart time.Time
 	if g.profiling {
@@ -176,11 +181,15 @@ func (g *Graph) ForwardCtx(ctx context.Context, inputs ...*autograd.Variable) *a
 	// Walks into SubModuler children so nested Resettable modules
 	// (e.g., inside user composites) are reached.
 	if batchSize := inputs[0].Data().Shape()[0]; batchSize > 0 {
+		dev := inputs[0].Data().Device()
+		if g.device != nil {
+			dev = *g.device
+		}
 		for _, node := range g.order {
 			if node.module != nil {
 				visited := make(map[nn.Module]bool)
 				nn.WalkModules(node.module, visited, func(mod nn.Module) {
-					nn.Reset(mod, batchSize)
+					nn.Reset(mod, batchSize, dev)
 				})
 			}
 		}

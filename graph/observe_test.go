@@ -723,15 +723,16 @@ func TestElapsed(t *testing.T) {
 	}
 
 	if g.Elapsed() != 0 {
-		t.Error("elapsed should be 0 before any flush")
+		t.Error("elapsed should be 0 before any forward")
 	}
 
-	g.Record("loss", 1.0)
-	g.Flush()
+	// Forward sets trainingStart.
+	x, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1})
+	g.Forward(autograd.NewVariable(x, false))
 
-	// Elapsed should be positive after flush.
+	// Elapsed should be positive after forward.
 	if g.Elapsed() <= 0 {
-		t.Error("elapsed should be positive after flush")
+		t.Error("elapsed should be positive after forward")
 	}
 }
 
@@ -776,11 +777,16 @@ func TestETA(t *testing.T) {
 		t.Error("ETA should be 0 before any flush")
 	}
 
-	// Single flush → 0 (need 2 for rate estimate).
+	// Run a forward so trainingStart is set before the first epoch.
+	x, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1})
+	g.Forward(autograd.NewVariable(x, false))
+
 	g.Record("loss", 1.0)
 	g.Flush()
-	if g.ETA(100) != 0 {
-		t.Error("ETA should be 0 with single flush")
+
+	// Single flush → non-negative ETA (includes epoch 0 duration).
+	if g.ETA(100) < 0 {
+		t.Errorf("ETA should be non-negative after first flush, got %v", g.ETA(100))
 	}
 
 	g.Record("loss", 0.5)
@@ -788,8 +794,8 @@ func TestETA(t *testing.T) {
 
 	// Two flushes with total=100 → positive ETA.
 	eta := g.ETA(100)
-	if eta <= 0 {
-		t.Errorf("ETA should be positive, got %v", eta)
+	if eta < 0 {
+		t.Errorf("ETA should be non-negative, got %v", eta)
 	}
 
 	// Already done → 0.

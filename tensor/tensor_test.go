@@ -628,6 +628,33 @@ func TestComparisonOps(t *testing.T) {
 	}
 }
 
+func TestDTypeCastConvenience(t *testing.T) {
+	x, _ := tensor.FromFloat32([]float32{0.1, 0.9, 0.3, 0.8}, []int64{4})
+
+	// GTScalar returns float mask, ToInt64 converts to int indices.
+	mask := x.GTScalar(0.5).ToInt64()
+	if mask.DType() != tensor.Int64 {
+		t.Errorf("ToInt64 dtype = %v, want Int64", mask.DType())
+	}
+	idx, _ := mask.Int64Data()
+	want := []int64{0, 1, 0, 1}
+	for i, v := range want {
+		if idx[i] != v {
+			t.Errorf("idx[%d] = %d, want %d", i, idx[i], v)
+		}
+	}
+
+	// Double roundtrip.
+	d := x.Double()
+	if d.DType() != tensor.Float64 {
+		t.Errorf("Double dtype = %v, want Float64", d.DType())
+	}
+	back := d.Float()
+	if back.DType() != tensor.Float32 {
+		t.Errorf("Float dtype = %v, want Float32", back.DType())
+	}
+}
+
 func TestToDeviceChain(t *testing.T) {
 	if !tensor.CUDAAvailable() {
 		t.Skip("CUDA not available")

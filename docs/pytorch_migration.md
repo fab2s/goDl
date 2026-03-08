@@ -240,6 +240,33 @@ mask := x.LEScalar(0)
 y := mask.Where(a, b)
 ```
 
+### Dtype Casting
+
+```python
+# PyTorch
+y = x.long()       # → int64
+y = x.float()      # → float32
+y = x.double()     # → float64
+y = x.half()       # → float16
+y = x.to(torch.bfloat16)
+
+# Common pattern: comparison + cast (stays on GPU)
+idx = (labels > 0.5).long()
+```
+
+```go
+// goDl
+y := x.ToInt64()     // → Int64
+y := x.Float()       // → Float32
+y := x.Double()      // → Float64
+y := x.Half()        // → Float16
+y := x.ToBFloat16()  // → BFloat16
+y := x.ToDType(tensor.Int32) // any dtype
+
+// Same pattern — no CPU round-trip
+idx := labels.GTScalar(0.5).ToInt64()
+```
+
 ### Data Access
 
 ```python
@@ -324,6 +351,59 @@ cell, _ := nn.NewLSTMCell(128, 256)
 layer := nn.MustLinear(784, 128)
 layer := nn.MustConv2d(3, 64, 3, nn.Conv2dOpts{})
 ```
+
+## Composite Modules
+
+In PyTorch, `nn.Module.__init__` auto-discovers child modules assigned
+to `self`. In goDl, composite modules implement `SubModuler` to declare
+children — enabling recursive device placement, training mode, and
+parameter collection.
+
+```python
+# PyTorch — children auto-discovered
+class MLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(784, 128)   # registered automatically
+        self.fc2 = nn.Linear(128, 10)
+
+    def forward(self, x):
+        return self.fc2(F.relu(self.fc1(x)))
+
+model.to(device)           # walks children automatically
+model.parameters()         # collects from all children
+model.train()              # propagates to children
+```
+
+```go
+// goDl — declare children via SubModules()
+type MLP struct {
+    fc1 *nn.Linear
+    fc2 *nn.Linear
+}
+
+func (m *MLP) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+    return m.fc2.Forward(m.fc1.Forward(inputs[0]).ReLU())
+}
+
+func (m *MLP) SubModules() []nn.Module {
+    return []nn.Module{m.fc1, m.fc2}
+}
+
+func (m *MLP) Parameters() []*nn.Parameter {
+    return nn.CollectParameters(m) // walks SubModules, deduplicates
+}
+
+// graph.SetDevice, SetTraining, DetachState all walk SubModules automatically
+```
+
+| Aspect | PyTorch | goDl |
+|--------|---------|------|
+| Child discovery | Implicit (`self.x = ...`) | Explicit (`SubModules()`) |
+| Parameter collection | Automatic | `nn.CollectParameters(m)` walks tree |
+| Device move | `model.to(device)` walks children | `SetDevice` walks `SubModuler` + `DeviceMover` |
+| Non-parameter state | `register_buffer()` | Implement `DeviceMover` (e.g., BatchNorm running stats) |
+| Training mode | `model.train()` walks children | `SetTraining` walks `SubModuler` + `TrainToggler` |
 
 ## Activations (as Modules)
 

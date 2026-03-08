@@ -167,7 +167,7 @@ func (g *Graph) WriteLog(path string, totalEpochs int, tags ...string) error {
 		if i < len(g.flushTimes) {
 			var dur time.Duration
 			if i == 0 {
-				dur = g.flushTimes[0].Sub(g.flushStart)
+				dur = g.flushTimes[0].Sub(g.trainingStart)
 			} else {
 				dur = g.flushTimes[i].Sub(g.flushTimes[i-1])
 			}
@@ -175,9 +175,9 @@ func (g *Graph) WriteLog(path string, totalEpochs int, tags ...string) error {
 				b.WriteString("  [")
 				b.WriteString(FormatDuration(dur))
 				// ETA.
-				if totalEpochs > 0 && i > 0 {
-					elapsed := g.flushTimes[i].Sub(g.flushStart)
-					perEpoch := elapsed / time.Duration(i)
+				if totalEpochs > 0 {
+					elapsed := g.flushTimes[i].Sub(g.trainingStart)
+					perEpoch := elapsed / time.Duration(i+1)
 					remaining := perEpoch * time.Duration(totalEpochs-i-1)
 					if remaining > 0 {
 						fmt.Fprintf(&b, "  ETA %s", FormatDuration(remaining))

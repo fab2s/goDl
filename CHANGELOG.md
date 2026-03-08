@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Loader device**: `LoaderConfig{Device: tensor.DevicePtr(tensor.CUDA)}` moves both input and target batches after stacking.
 - **Variable.ToDevice**: moves a variable's data to a target device, preserving `requiresGrad`.
 - **tensor.DevicePtr**: convenience helper for `*tensor.Device` in config structs.
+- **Tensor.ToInt64**: dtype cast shorthand — enables `caseLabel.GTScalar(0.5).ToInt64()` without CPU round-trip.
+- **Tensor.Double**: dtype cast shorthand for Float64, mirroring `Float()` and `Half()`.
+
+### Changed
+- **Resettable.Reset**: signature changed from `Reset(batchSize int64)` to `Reset(batchSize int64, device tensor.Device)`. The graph passes the configured device (or the input's device), eliminating the need to sniff device from parameter weights.
 
 ### Fixed
 - **Backward memory retention**: the autograd engine now releases the computation graph during backward — `gradFn`, captured tensors, and intermediate forward results are nil'd out as each node is processed. Previously the entire graph stayed alive until the GC collected the user's loss variable, causing VRAM accumulation across training steps. See `docs/design/memory-management.md`.
@@ -33,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Backward seed device**: the autograd engine now creates the backward seed tensor (`ones`) on the same device as the loss. Previously defaulted to CPU.
 - **ClipGradValue device**: `nn.ClipGradValue` now preserves the gradient's device when clamping. Previously could produce CPU gradients from CUDA parameters.
 - **BatchNorm lazy device alignment**: `BatchNorm.Forward` moves running statistics to match the input device if they differ, preventing device mismatch when BatchNorm is nested inside user-defined composite modules that aren't direct graph nodes.
+- **ETA calculation**: training start is now recorded on first Forward (not first Flush), so epoch 0's duration is included in the per-epoch average. ETA is available after 1 flush instead of requiring 2. `Elapsed()` and `WriteLog` updated consistently.
 
 ## [v0.1.0] - 2026-03-07
 
@@ -73,7 +79,7 @@ Initial public release.
 - Training curves: PlotHTML, ExportTrends.
 
 ### Testing
-- 459 tests, all passing with race detector.
+- 460 tests, all passing with race detector.
 - 40 autograd numerical gradient checks (finite differences).
 - 10 module-level gradient checks (input + parameter gradients).
 - 11 exact optimizer step verifications.

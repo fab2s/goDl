@@ -79,7 +79,7 @@ Requirements: Docker (with NVIDIA Container Toolkit for GPU support).
 git clone https://github.com/fab2s/goDl.git
 cd goDl
 make image    # build dev container (Go + libtorch + CUDA)
-make test     # run all 459 tests (CPU + CUDA)
+make test     # run all 460 tests (CPU + CUDA)
 make test-cpu # run without GPU
 make doc      # local doc server (pkg.go.dev style)
 make shell    # interactive shell in container
@@ -176,7 +176,7 @@ interfaces that the graph recognizes automatically:
 
 | Interface | Method | What happens |
 |-----------|--------|-------------|
-| `Resettable` | `Reset(batchSize int64)` | Graph auto-calls before each Forward — modules with per-forward state (attention location, counter, accumulator) reset cleanly without manual setup |
+| `Resettable` | `Reset(batchSize int64, device tensor.Device)` | Graph auto-calls before each Forward — modules with per-forward state (attention location, counter, accumulator) reset cleanly on the correct device |
 | `Traced` | `Trace() *Variable` | Loop executor collects return value before first iteration and after each step — `g.Traces(tag)` returns the full trajectory |
 | `NamedInputModule` | `ForwardNamed(stream, refs)` | Loop and node Using refs arrive as a named map instead of positional args |
 | `RefValidator` | `RefNames() []string` | Build-time validation that exactly the expected Using refs are wired |
@@ -313,7 +313,7 @@ Every differentiable path is verified against finite-difference gradients:
 - 40 autograd op-level checks (every op + compositions)
 - 10 module-level checks (every NN module, input + parameter gradients)
 - 11 exact optimizer step verifications (SGD, Adam, AdamW)
-- 459 tests total, all passing with race detector
+- 460 tests total, all passing with race detector
 
 ## Why Go for Deep Learning?
 

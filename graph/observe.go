@@ -284,8 +284,10 @@ func (g *Graph) Flush(tags ...string) {
 	if len(flushed) > 0 {
 		now := time.Now()
 		g.flushCount++
-		if g.flushCount == 1 {
-			g.flushStart = now
+		// Fallback: if no Forward was called (Record-only usage),
+		// treat first flush as training start.
+		if g.trainingStart.IsZero() {
+			g.trainingStart = now
 		}
 		g.flushTimes = append(g.flushTimes, now)
 	}
@@ -356,27 +358,30 @@ func (g *Graph) FlushCount() int {
 	return g.flushCount
 }
 
-// Elapsed returns the wall-clock time since the first Flush.
-// Returns 0 if Flush has never been called.
+// Elapsed returns the wall-clock time since training started (first Forward).
+// Returns 0 if Forward has never been called.
 func (g *Graph) Elapsed() time.Duration {
-	if g.flushCount == 0 {
+	if g.trainingStart.IsZero() {
 		return 0
 	}
-	return time.Since(g.flushStart)
+	return time.Since(g.trainingStart)
 }
 
 // ETA estimates the remaining wall-clock time based on flush cadence.
 // totalEpochs is the total expected number of Flush calls (epochs).
-// Returns 0 if fewer than 2 flushes have occurred (not enough data).
+// Returns 0 if no flushes have occurred yet.
+//
+// The estimate includes epoch 0's full duration — training start is
+// recorded on the first Forward call, not the first Flush.
 //
 //	remaining := g.ETA(100)
 //	fmt.Printf("ETA: %s\n", remaining)
 func (g *Graph) ETA(totalEpochs int) time.Duration {
-	if g.flushCount < 2 {
+	if g.flushCount == 0 {
 		return 0
 	}
-	elapsed := g.flushTimes[g.flushCount-1].Sub(g.flushStart)
-	perFlush := elapsed / time.Duration(g.flushCount-1)
+	elapsed := g.flushTimes[g.flushCount-1].Sub(g.trainingStart)
+	perFlush := elapsed / time.Duration(g.flushCount)
 	remaining := totalEpochs - g.flushCount
 	if remaining <= 0 {
 		return 0
