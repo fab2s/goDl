@@ -132,9 +132,9 @@ func (sc *switchComposite) Parameters() []*nn.Parameter {
 	return all
 }
 
-func (sc *switchComposite) SetTraining(training bool) {
-	nn.SetTraining(sc.router, training)
-	for _, b := range sc.branches {
-		nn.SetTraining(b, training)
-	}
+func (sc *switchComposite) SubModules() []nn.Module {
+	mods := make([]nn.Module, 0, 1+len(sc.branches))
+	mods = append(mods, sc.router)
+	mods = append(mods, sc.branches...)
+	return mods
 }

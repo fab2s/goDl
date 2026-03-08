@@ -24,7 +24,7 @@ func (v *Variable) Backward() error {
 	if len(shape) == 0 {
 		shape = []int64{1}
 	}
-	seed, err := tensor.Ones(shape, tensor.WithDType(v.data.DType()))
+	seed, err := tensor.Ones(shape, tensor.WithDType(v.data.DType()), tensor.WithDevice(v.data.Device()))
 	if err != nil {
 		return fmt.Errorf("autograd: creating gradient seed: %w", err)
 	}

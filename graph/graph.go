@@ -173,10 +173,15 @@ func (g *Graph) ForwardCtx(ctx context.Context, inputs ...*autograd.Variable) *a
 	}
 
 	// Auto-reset Resettable modules before execution.
+	// Walks into SubModuler children so nested Resettable modules
+	// (e.g., inside user composites) are reached.
 	if batchSize := inputs[0].Data().Shape()[0]; batchSize > 0 {
 		for _, node := range g.order {
 			if node.module != nil {
-				nn.Reset(node.module, batchSize)
+				visited := make(map[nn.Module]bool)
+				nn.WalkModules(node.module, visited, func(mod nn.Module) {
+					nn.Reset(mod, batchSize)
+				})
 			}
 		}
 	}
@@ -410,13 +415,17 @@ func (g *Graph) captureState(node *Node, outs []*autograd.Variable) {
 
 // SetTraining propagates training mode to all modules in the graph.
 // Modules that implement nn.TrainToggler (e.g., Dropout, BatchNorm)
-// will switch behavior. Nested graphs propagate recursively.
+// will switch behavior. Walks into [nn.SubModuler] children and
+// nested graphs recursively.
 func (g *Graph) SetTraining(training bool) {
 	for _, node := range g.order {
 		if node.module == nil {
 			continue
 		}
-		nn.SetTraining(node.module, training)
+		visited := make(map[nn.Module]bool)
+		nn.WalkModules(node.module, visited, func(mod nn.Module) {
+			nn.SetTraining(mod, training)
+		})
 	}
 }
 
@@ -544,15 +553,18 @@ func (g *Graph) DetachState() {
 		}
 	}
 
-	// Recurse into sub-graphs and detachable modules.
+	// Walk into sub-modules and sub-graphs recursively.
 	for _, node := range g.order {
 		if node.module == nil {
 			continue
 		}
-		if sub, ok := node.module.(*Graph); ok {
-			sub.DetachState()
-		}
-		nn.Detach(node.module)
+		visited := make(map[nn.Module]bool)
+		nn.WalkModules(node.module, visited, func(mod nn.Module) {
+			if sub, ok := mod.(*Graph); ok {
+				sub.DetachState()
+			}
+			nn.Detach(mod)
+		})
 	}
 }
 
@@ -602,23 +614,19 @@ func (g *Graph) SetDevice(device tensor.Device) {
 	}
 }
 
-// setDeviceOnModule propagates SetDevice into composite module types
-// that may contain sub-graphs.
+// setDeviceOnModule walks the module tree via [nn.SubModuler] to move
+// non-parameter state (nn.DeviceMover) and propagate SetDevice into
+// nested sub-graphs.
 func setDeviceOnModule(m nn.Module, device tensor.Device) {
-	switch v := m.(type) {
-	case *Graph:
-		v.SetDevice(device)
-	case *loopComposite:
-		setDeviceOnModule(v.body, device)
-		setDeviceOnModule(v.cond, device)
-	case *switchComposite:
-		setDeviceOnModule(v.router, device)
-		for _, b := range v.branches {
-			setDeviceOnModule(b, device)
+	visited := make(map[nn.Module]bool)
+	nn.WalkModules(m, visited, func(mod nn.Module) {
+		if dm, ok := mod.(nn.DeviceMover); ok {
+			dm.MoveToDevice(device)
 		}
-	case *mapComposite:
-		setDeviceOnModule(v.body, device)
-	}
+		if sub, ok := mod.(*Graph); ok {
+			sub.SetDevice(device)
+		}
+	})
 }
 
 // topologicalLevels groups nodes by execution level using Kahn's algorithm.

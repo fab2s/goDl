@@ -1643,3 +1643,102 @@ func TestClipGradValue(t *testing.T) {
 		}
 	}
 }
+
+// --- SubModuler and CollectParameters ---
+
+// mockComposite is a test composite module containing sub-modules.
+type mockComposite struct {
+	fc1 *nn.Linear
+	bn  *nn.BatchNorm
+	fc2 *nn.Linear
+}
+
+func newMockComposite() *mockComposite {
+	bn, err := nn.NewBatchNorm(4)
+	if err != nil {
+		panic(err)
+	}
+	return &mockComposite{
+		fc1: nn.MustLinear(3, 4),
+		bn:  bn,
+		fc2: nn.MustLinear(4, 2),
+	}
+}
+
+func (m *mockComposite) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	x := m.fc1.Forward(inputs...)
+	x = m.bn.Forward(x)
+	return m.fc2.Forward(x)
+}
+
+func (m *mockComposite) SubModules() []nn.Module {
+	return []nn.Module{m.fc1, m.bn, m.fc2}
+}
+
+func (m *mockComposite) Parameters() []*nn.Parameter {
+	return nn.CollectParameters(m)
+}
+
+func TestCollectParametersLeaf(t *testing.T) {
+	linear := nn.MustLinear(3, 2)
+	params := nn.CollectParameters(linear)
+	if len(params) != 2 {
+		t.Fatalf("expected 2 params (weight+bias), got %d", len(params))
+	}
+}
+
+func TestCollectParametersComposite(t *testing.T) {
+	m := newMockComposite()
+	params := m.Parameters()
+	// fc1: weight+bias = 2, bn: weight+bias = 2, fc2: weight+bias = 2
+	if len(params) != 6 {
+		t.Fatalf("expected 6 params, got %d", len(params))
+	}
+}
+
+// sharedModel implements Module but not SubModuler — tests leaf dedup path.
+type sharedModel struct {
+	a, b *nn.Linear
+}
+
+func (m *sharedModel) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	return m.a.Forward(inputs...)
+}
+func (m *sharedModel) Parameters() []*nn.Parameter {
+	all := m.a.Parameters()
+	all = append(all, m.b.Parameters()...)
+	return all
+}
+
+func TestCollectParametersDeduplicates(t *testing.T) {
+	shared := nn.MustLinear(3, 4)
+	m := &sharedModel{a: shared, b: shared}
+	// Manual collection without dedup would give 4, with dedup gives 2.
+	params := nn.CollectParameters(m)
+	if len(params) != 2 {
+		t.Fatalf("expected 2 deduplicated params, got %d", len(params))
+	}
+}
+
+func TestWalkModulesVisitsAll(t *testing.T) {
+	m := newMockComposite()
+	var visited []nn.Module
+	nn.WalkModules(m, make(map[nn.Module]bool), func(mod nn.Module) {
+		visited = append(visited, mod)
+	})
+	// mockComposite + fc1 + bn + fc2 = 4
+	if len(visited) != 4 {
+		t.Fatalf("expected 4 modules visited, got %d", len(visited))
+	}
+}
+
+func TestWalkModulesDeduplicatesShared(t *testing.T) {
+	shared := nn.MustLinear(3, 4)
+	m := &sharedModel{a: shared, b: shared}
+	// sharedModel doesn't implement SubModuler, so only itself is visited.
+	var count int
+	nn.WalkModules(m, make(map[nn.Module]bool), func(nn.Module) { count++ })
+	if count != 1 {
+		t.Fatalf("expected 1 (no SubModuler), got %d", count)
+	}
+}

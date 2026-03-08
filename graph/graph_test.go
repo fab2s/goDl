@@ -3226,3 +3226,127 @@ func TestAutoMoveInputCPU(t *testing.T) {
 		t.Errorf("output on %v, want CPU", out.Data().Device())
 	}
 }
+
+// --- SubModuler propagation tests ---
+
+// compositeWithBN is a user-defined composite module containing a BatchNorm.
+// It implements SubModuler so the graph can walk into it.
+type compositeWithBN struct {
+	fc *nn.Linear
+	bn *nn.BatchNorm
+}
+
+func newCompositeWithBN() *compositeWithBN {
+	bn, err := nn.NewBatchNorm(4)
+	if err != nil {
+		panic(err)
+	}
+	return &compositeWithBN{
+		fc: nn.MustLinear(3, 4),
+		bn: bn,
+	}
+}
+
+func (m *compositeWithBN) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	x := m.fc.Forward(inputs...)
+	return m.bn.Forward(x)
+}
+
+func (m *compositeWithBN) SubModules() []nn.Module {
+	return []nn.Module{m.fc, m.bn}
+}
+
+func (m *compositeWithBN) Parameters() []*nn.Parameter {
+	return nn.CollectParameters(m)
+}
+
+func TestSetDeviceSubModuler(t *testing.T) {
+	mod := newCompositeWithBN()
+
+	g, err := From(mod).Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// Before SetDevice, running stats are on CPU.
+	if mod.bn.RunningMean.Device() != tensor.CPU {
+		t.Fatalf("RunningMean should start on CPU")
+	}
+
+	g.SetDevice(tensor.CPU) // move to CPU (no-op, but exercises the walk)
+
+	// Verify SetDevice walked into the composite and found the BatchNorm.
+	if mod.bn.RunningMean.Device() != tensor.CPU {
+		t.Errorf("RunningMean on %v after SetDevice(CPU), want CPU", mod.bn.RunningMean.Device())
+	}
+}
+
+func TestSetTrainingSubModuler(t *testing.T) {
+	mod := newCompositeWithBN()
+
+	g, err := From(mod).Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// BatchNorm starts in training mode.
+	g.SetTraining(false)
+
+	// Verify SetTraining walked into the composite.
+	in, _ := tensor.Rand([]int64{2, 3})
+	out := g.Forward(autograd.NewVariable(in, false))
+	if err := out.Err(); err != nil {
+		t.Fatalf("Forward in eval mode: %v", err)
+	}
+
+	// If SetTraining didn't reach BatchNorm, eval mode forward
+	// would use uninitialized running stats (all zeros mean,
+	// unit var) — output should still be valid (no NaN/error).
+	data, _ := out.Data().Float32Data()
+	for _, v := range data {
+		if math.IsNaN(float64(v)) {
+			t.Fatal("got NaN — SetTraining(false) may not have reached BatchNorm")
+		}
+	}
+}
+
+// detachableModule tracks whether Detach was called.
+type detachableModule struct {
+	detached bool
+}
+
+func (d *detachableModule) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	return inputs[0]
+}
+func (d *detachableModule) Parameters() []*nn.Parameter { return nil }
+func (d *detachableModule) Detach()                     { d.detached = true }
+
+// compositeWithDetachable nests a detachableModule inside a SubModuler.
+type compositeWithDetachable struct {
+	inner *detachableModule
+}
+
+func (c *compositeWithDetachable) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	return c.inner.Forward(inputs...)
+}
+func (c *compositeWithDetachable) Parameters() []*nn.Parameter { return nil }
+func (c *compositeWithDetachable) SubModules() []nn.Module     { return []nn.Module{c.inner} }
+
+func TestDetachStateSubModuler(t *testing.T) {
+	inner := &detachableModule{}
+	mod := &compositeWithDetachable{inner: inner}
+
+	g, err := From(mod).Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// Forward to populate graph state, then DetachState.
+	in, _ := tensor.Ones([]int64{1, 1})
+	g.Forward(autograd.NewVariable(in, false))
+	g.DetachState()
+
+	if !inner.detached {
+		t.Error("DetachState did not reach nested Detachable via SubModuler")
+	}
+}

@@ -311,8 +311,8 @@ func makeUntilLoopFunc(body, cond nn.Module, node *Node, maxIter int, ec *execCt
 
 // --- composite module for While and Until ---
 
-// loopComposite bundles body + condition for SetTraining propagation
-// and parameter collection. Used by both While and Until.
+// loopComposite bundles body + condition for parameter collection and
+// SubModuler-based propagation. Used by both While and Until.
 type loopComposite struct {
 	body nn.Module
 	cond nn.Module
@@ -328,23 +328,6 @@ func (lc *loopComposite) Parameters() []*nn.Parameter {
 	return all
 }
 
-func (lc *loopComposite) SetTraining(training bool) {
-	nn.SetTraining(lc.body, training)
-	nn.SetTraining(lc.cond, training)
-}
-
-func (lc *loopComposite) Reset(batchSize int64) {
-	nn.Reset(lc.body, batchSize)
-	nn.Reset(lc.cond, batchSize)
-}
-
-func (lc *loopComposite) Detach() {
-	nn.Detach(lc.body)
-	nn.Detach(lc.cond)
-	if sub, ok := lc.body.(*Graph); ok {
-		sub.DetachState()
-	}
-	if sub, ok := lc.cond.(*Graph); ok {
-		sub.DetachState()
-	}
+func (lc *loopComposite) SubModules() []nn.Module {
+	return []nn.Module{lc.body, lc.cond}
 }

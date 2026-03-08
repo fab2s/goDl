@@ -209,13 +209,58 @@ type RefValidator interface {
 }
 ```
 
+**SubModuler** — for composite modules that contain other Modules as
+children. When implemented, the framework walks the module tree
+automatically for device placement, training mode, state detachment,
+and per-forward reset:
+
+```go
+type SubModuler interface {
+    SubModules() []Module
+}
+```
+
+Built-in: `GRUCell`, `LSTMCell`, and all graph composites (loop,
+switch, map) implement this. See [Composing Modules](#composing-modules-manually)
+below for the recommended pattern.
+
+**DeviceMover** — for modules with non-parameter tensors (running
+statistics, cached buffers) that must be moved alongside parameters
+when `SetDevice` is called:
+
+```go
+type DeviceMover interface {
+    MoveToDevice(device tensor.Device)
+}
+```
+
+Built-in: `BatchNorm` implements this for its running mean and
+variance. Parameters are moved automatically by `Graph.SetDevice` —
+DeviceMover handles everything else.
+
+**Detachable** — for modules that hold autograd Variables in struct
+fields across Forward calls (recurrent state, attention locations).
+`Graph.DetachState` calls `Detach()` recursively on all modules
+that implement this:
+
+```go
+type Detachable interface {
+    Detach()
+}
+```
+
+See [Training — DetachState](04-training.md#stateful-graphs--detachstate)
+for when and why this is needed.
+
 All interfaces are opt-in. Modules that don't implement them work
 normally. See [Advanced Graphs](06-advanced-graphs.md) for detailed
 usage with loops and the graph builder.
 
 ## Composing Modules Manually
 
-Without the graph builder, you compose modules in plain Go:
+Without the graph builder, you compose modules in plain Go. Implement
+`SubModuler` to declare children — the framework then handles device
+placement, training mode, state detachment, and reset automatically:
 
 ```go
 type MLP struct {
@@ -238,15 +283,27 @@ func (m *MLP) Forward(inputs ...*autograd.Variable) *autograd.Variable {
     return m.fc2.Forward(x)
 }
 
+// SubModules declares children — enables recursive device moves,
+// training mode propagation, and automatic parameter collection.
+func (m *MLP) SubModules() []nn.Module {
+    return []nn.Module{m.fc1, m.fc2}
+}
+
+// Parameters delegates to CollectParameters, which walks SubModules
+// recursively and deduplicates shared weights.
 func (m *MLP) Parameters() []*nn.Parameter {
-    var params []*nn.Parameter
-    params = append(params, m.fc1.Parameters()...)
-    params = append(params, m.fc2.Parameters()...)
-    return params
+    return nn.CollectParameters(m)
 }
 ```
 
-This works fine for simple models. For anything involving residual connections, parallel branches, loops, or conditional execution, the graph builder API (`graph` package) is more expressive and handles the wiring automatically.
+This is the same pattern as PyTorch's `nn.Module` — declare children,
+let the framework walk the tree. `CollectParameters` replaces manual
+aggregation: it recurses into `SubModules()`, collects leaf parameters,
+and deduplicates by pointer identity (shared weights counted once).
+
+For anything involving residual connections, parallel branches, loops,
+or conditional execution, the graph builder API (`graph` package) is
+more expressive and handles the wiring automatically.
 
 ---
 

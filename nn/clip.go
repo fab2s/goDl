@@ -88,7 +88,7 @@ func ClipGradValue(params []*Parameter, maxVal float64) float64 {
 			if err != nil {
 				continue
 			}
-			p.SetGrad(newGrad)
+			p.SetGrad(newGrad.ToDevice(grad.Device()))
 		}
 	}
 

@@ -125,6 +125,11 @@ func (l *LSTMCell) Forward(inputs ...*autograd.Variable) *autograd.Variable {
 	return hNew.Cat(cNew, 1)
 }
 
+// SubModules returns the eight Linear projections (four input, four hidden).
+func (l *LSTMCell) SubModules() []Module {
+	return []Module{l.XI, l.XF, l.XG, l.XO, l.HI, l.HF, l.HG, l.HO}
+}
+
 // Parameters returns all gate weights and biases (16 parameters).
 func (l *LSTMCell) Parameters() []*Parameter {
 	var params []*Parameter

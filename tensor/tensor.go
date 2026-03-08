@@ -243,7 +243,8 @@ func OneHot(indices *Tensor, nClasses, batchSize int64) *Tensor {
 	if terr != nil {
 		return errTensor(terr)
 	}
-	return t
+	// Match the device of the input indices.
+	return t.ToDevice(indices.Device())
 }
 
 // Eye creates an n×n identity matrix (float32).

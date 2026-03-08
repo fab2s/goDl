@@ -120,8 +120,10 @@ use `SetDevice` on the graph and optionally `Device` on the loader.
 ### Moving the model
 
 `SetDevice` moves all parameters and state buffers to the target
-device. It recurses into sub-graphs and composite modules (loops,
-switches, maps) automatically.
+device. It uses `WalkModules` to recurse into sub-graphs, composite
+modules (loops, switches, maps), and any user module implementing
+`SubModuler` — automatically reaching nested `DeviceMover` modules
+like `BatchNorm`.
 
 ```go
 model, _ := buildModel()
@@ -334,7 +336,8 @@ for loader.Next() {
 }
 ```
 
-`DetachState` is recursive — it walks sub-graphs and calls `Detach()`
+`DetachState` is recursive — it uses `WalkModules` to traverse the
+full module tree (including `SubModuler` children) and calls `Detach()`
 on any module implementing `nn.Detachable`. A single call on the
 outermost graph handles the entire model hierarchy.
 

@@ -16,15 +16,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Checkpoint**: composable training resume — bundles model parameters, optimizer state, scheduler state, and epoch into a single file. Supports `Save(epoch)` / `Load()` / `LoadEpoch(n)`.
 - **Stateful interface**: `SaveState(io.Writer) / LoadState(io.Reader)` implemented by all optimizers (SGD, Adam, AdamW), schedulers (StepDecay, Cosine, Warmup, Plateau), and GradScaler.
 - **Detachable interface**: `nn.Detachable` for modules holding Variables in struct fields across Forward calls. `nn.Detach(m)` helper.
-- **Device placement**: `Graph.SetDevice(device)` moves all parameters and state buffers, recurses into sub-graphs and composites. `Graph.Device()` getter. Auto-moves input tensors at graph entry when device is set.
+- **SubModuler interface**: `nn.SubModuler` for composite modules that declare child modules. The framework walks the tree automatically for device placement, training mode, state detachment, and per-forward reset. Built-in implementations on `GRUCell`, `LSTMCell`, and all graph composites (loop, switch, map).
+- **CollectParameters**: `nn.CollectParameters(m)` recursively collects deduplicated parameters from a module and its `SubModuler` children. Shared weights are counted once.
+- **WalkModules**: `nn.WalkModules(m, visited, fn)` generic tree walker for recursive module operations — used by `Graph.SetDevice`, `SetTraining`, `DetachState`, and `Reset`.
+- **DeviceMover interface**: `nn.DeviceMover` for modules with non-parameter tensors (running statistics, buffers) that must move with `SetDevice`. `BatchNorm` implements this for its running mean/variance.
+- **Device placement**: `Graph.SetDevice(device)` moves all parameters and state buffers, recurses into sub-graphs and composites via `WalkModules`. `Graph.Device()` getter. Auto-moves input tensors at graph entry when device is set.
 - **Loader device**: `LoaderConfig{Device: tensor.DevicePtr(tensor.CUDA)}` moves both input and target batches after stacking.
 - **Variable.ToDevice**: moves a variable's data to a target device, preserving `requiresGrad`.
 - **tensor.DevicePtr**: convenience helper for `*tensor.Device` in config structs.
 
 ### Fixed
 - **Backward memory retention**: the autograd engine now releases the computation graph during backward — `gradFn`, captured tensors, and intermediate forward results are nil'd out as each node is processed. Previously the entire graph stayed alive until the GC collected the user's loss variable, causing VRAM accumulation across training steps. See `docs/design/memory-management.md`.
-- **DetachState memory growth**: `DetachState` is now recursive — walks sub-graphs and calls `Detach()` on all `Detachable` modules. Previously only detached the graph's own forward-reference state buffers, leaving module-level state (hidden vectors, attention locations) attached. This caused unbounded memory growth in models with stateful loop bodies.
+- **DetachState memory growth**: `DetachState` is now recursive — walks sub-graphs via `WalkModules` and calls `Detach()` on all `Detachable` modules and nested graphs. Previously only detached the graph's own forward-reference state buffers.
 - **Module device mismatch**: GRUCell, LSTMCell, and Dropout now create internal tensors (zero hidden states, dropout masks) on the same device and dtype as the input. Previously these defaulted to CPU, causing device mismatch errors after `SetDevice(CUDA)`.
+- **OneHot device**: `tensor.OneHot` now returns a tensor on the same device as the input indices. Previously always created CPU tensors, causing device mismatch in `CrossEntropyLoss` on CUDA.
+- **Backward seed device**: the autograd engine now creates the backward seed tensor (`ones`) on the same device as the loss. Previously defaulted to CPU.
+- **ClipGradValue device**: `nn.ClipGradValue` now preserves the gradient's device when clamping. Previously could produce CPU gradients from CUDA parameters.
+- **BatchNorm lazy device alignment**: `BatchNorm.Forward` moves running statistics to match the input device if they differ, preventing device mismatch when BatchNorm is nested inside user-defined composite modules that aren't direct graph nodes.
 
 ## [v0.1.0] - 2026-03-07
 
@@ -65,7 +73,7 @@ Initial public release.
 - Training curves: PlotHTML, ExportTrends.
 
 ### Testing
-- 412 tests, all passing with race detector.
+- 459 tests, all passing with race detector.
 - 40 autograd numerical gradient checks (finite differences).
 - 10 module-level gradient checks (input + parameter gradients).
 - 11 exact optimizer step verifications.

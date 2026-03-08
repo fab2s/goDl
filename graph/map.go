@@ -297,8 +297,8 @@ func (mc *mapComposite) Parameters() []*nn.Parameter {
 	return mc.body.Parameters()
 }
 
-func (mc *mapComposite) SetTraining(training bool) {
-	nn.SetTraining(mc.body, training)
+func (mc *mapComposite) SubModules() []nn.Module {
+	return []nn.Module{mc.body}
 }
 
 // mapBodyForward dispatches a single map element to the body, handling

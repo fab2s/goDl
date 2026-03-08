@@ -133,6 +133,89 @@ func Detach(m Module) {
 	}
 }
 
+// DeviceMover is implemented by modules that hold non-parameter tensors
+// (e.g., running statistics in BatchNorm) that must be moved alongside
+// parameters when [Graph.SetDevice] is called.
+//
+// Parameters are moved automatically by Graph.SetDevice. DeviceMover
+// handles everything else — buffers, running averages, cached tensors.
+type DeviceMover interface {
+	MoveToDevice(device tensor.Device)
+}
+
+// SubModuler is an optional interface for composite modules that contain
+// other Modules as children. When implemented, the framework walks the
+// module tree automatically for device placement, training mode, state
+// detachment, and per-forward reset.
+//
+// Leaf modules (Linear, Conv2d, BatchNorm, etc.) do not implement this.
+// The returned slice should list direct children only — the framework
+// handles recursion.
+//
+//	func (m *MyModel) SubModules() []Module {
+//	    return []Module{m.encoder, m.decoder}
+//	}
+//
+//	func (m *MyModel) Parameters() []*Parameter {
+//	    return CollectParameters(m)
+//	}
+type SubModuler interface {
+	SubModules() []Module
+}
+
+// CollectParameters recursively collects all parameters from a module
+// and its [SubModuler] children. Parameters are deduplicated by pointer
+// identity, so shared weights are counted once.
+//
+// For leaf modules, this returns the same result as Parameters(). For
+// composite modules implementing SubModuler, it walks the tree so the
+// module doesn't need to manually aggregate:
+//
+//	func (m *MyModel) Parameters() []*Parameter {
+//	    return nn.CollectParameters(m)
+//	}
+func CollectParameters(m Module) []*Parameter {
+	seen := make(map[*Parameter]bool)
+	var params []*Parameter
+	collectParams(m, seen, &params)
+	return params
+}
+
+func collectParams(m Module, seen map[*Parameter]bool, out *[]*Parameter) {
+	if sm, ok := m.(SubModuler); ok {
+		// Composite: recurse into children. Skip m.Parameters() to
+		// avoid infinite recursion when Parameters() delegates to
+		// CollectParameters.
+		for _, child := range sm.SubModules() {
+			collectParams(child, seen, out)
+		}
+		return
+	}
+	// Leaf module: collect its own parameters.
+	for _, p := range m.Parameters() {
+		if !seen[p] {
+			seen[p] = true
+			*out = append(*out, p)
+		}
+	}
+}
+
+// WalkModules calls fn on m and recursively on all [SubModuler] children.
+// The visited map prevents double-visits when modules are shared across
+// branches. Callers should pass a freshly allocated map.
+func WalkModules(m Module, visited map[Module]bool, fn func(Module)) {
+	if visited[m] {
+		return
+	}
+	visited[m] = true
+	fn(m)
+	if sm, ok := m.(SubModuler); ok {
+		for _, child := range sm.SubModules() {
+			WalkModules(child, visited, fn)
+		}
+	}
+}
+
 // Traced is implemented by loop body modules that produce per-iteration
 // side outputs. The loop executor calls Trace after each iteration to
 // collect the trajectory, which is accessible via [Graph.Traces].

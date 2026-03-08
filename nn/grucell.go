@@ -101,6 +101,11 @@ func (g *GRUCell) Forward(inputs ...*autograd.Variable) *autograd.Variable {
 	return oneMinusZ.Mul(n).Add(z.Mul(h))
 }
 
+// SubModules returns the six Linear projections (three input, three hidden).
+func (g *GRUCell) SubModules() []Module {
+	return []Module{g.XR, g.XZ, g.XN, g.HR, g.HZ, g.HN}
+}
+
 // Parameters returns all gate weights and biases (12 parameters).
 func (g *GRUCell) Parameters() []*Parameter {
 	var params []*Parameter

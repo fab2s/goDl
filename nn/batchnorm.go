@@ -78,6 +78,12 @@ func (bn *BatchNorm) SetTraining(training bool) {
 func (bn *BatchNorm) Forward(inputs ...*autograd.Variable) *autograd.Variable {
 	x := inputs[0]
 
+	// Align running stats to the input device. Parameters are moved
+	// by Graph.SetDevice, but running stats (non-parameter tensors)
+	// may still be on CPU when the module is nested inside a composite
+	// that the graph can't walk into.
+	bn.MoveToDevice(x.Data().Device())
+
 	if !bn.training {
 		// Eval: normalize using running statistics.
 		mean := autograd.NewVariable(bn.RunningMean, false)
@@ -140,6 +146,21 @@ func (bn *BatchNorm) updateRunningStats(batchMean, batchVar *tensor.Tensor, batc
 	bn.RunningMean = newRM
 	bn.RunningVar.Release()
 	bn.RunningVar = newRV
+}
+
+// MoveToDevice moves non-parameter state (running statistics) to the
+// given device. Parameters are moved separately by Graph.SetDevice.
+func (bn *BatchNorm) MoveToDevice(device tensor.Device) {
+	if bn.RunningMean.Device() != device {
+		old := bn.RunningMean
+		bn.RunningMean = bn.RunningMean.ToDevice(device)
+		old.Release()
+	}
+	if bn.RunningVar.Device() != device {
+		old := bn.RunningVar
+		bn.RunningVar = bn.RunningVar.ToDevice(device)
+		old.Release()
+	}
 }
 
 // Parameters returns weight (gamma) and bias (beta).

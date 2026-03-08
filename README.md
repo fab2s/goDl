@@ -79,7 +79,7 @@ Requirements: Docker (with NVIDIA Container Toolkit for GPU support).
 git clone https://github.com/fab2s/goDl.git
 cd goDl
 make image    # build dev container (Go + libtorch + CUDA)
-make test     # run all 427 tests (CPU + CUDA)
+make test     # run all 459 tests (CPU + CUDA)
 make test-cpu # run without GPU
 make doc      # local doc server (pkg.go.dev style)
 make shell    # interactive shell in container
@@ -180,10 +180,17 @@ interfaces that the graph recognizes automatically:
 | `Traced` | `Trace() *Variable` | Loop executor collects return value before first iteration and after each step — `g.Traces(tag)` returns the full trajectory |
 | `NamedInputModule` | `ForwardNamed(stream, refs)` | Loop and node Using refs arrive as a named map instead of positional args |
 | `RefValidator` | `RefNames() []string` | Build-time validation that exactly the expected Using refs are wired |
+| `SubModuler` | `SubModules() []Module` | Declares child modules — framework walks the tree for device placement, training mode, state detachment, and reset |
+| `DeviceMover` | `MoveToDevice(device)` | Moves non-parameter tensors (running stats, buffers) when `SetDevice` is called |
+| `Detachable` | `Detach()` | Breaks gradient chains on retained state — called recursively by `DetachState` |
 
 These compose: a loop body that implements `Resettable` + `Traced` +
 `NamedInputModule` gets auto-reset, per-iteration trace collection, and
 named ref forwarding — all handled by the graph, no manual wiring.
+
+For composite user modules, implementing `SubModuler` is all it takes —
+the framework handles parameter collection, device moves, training mode,
+and state detachment recursively.
 
 ### Observation & Trends
 
@@ -306,7 +313,7 @@ Every differentiable path is verified against finite-difference gradients:
 - 40 autograd op-level checks (every op + compositions)
 - 10 module-level checks (every NN module, input + parameter gradients)
 - 11 exact optimizer step verifications (SGD, Adam, AdamW)
-- 427 tests total, all passing with race detector
+- 459 tests total, all passing with race detector
 
 ## Why Go for Deep Learning?
 
