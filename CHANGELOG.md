@@ -22,7 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **tensor.DevicePtr**: convenience helper for `*tensor.Device` in config structs.
 
 ### Fixed
+- **Backward memory retention**: the autograd engine now releases the computation graph during backward — `gradFn`, captured tensors, and intermediate forward results are nil'd out as each node is processed. Previously the entire graph stayed alive until the GC collected the user's loss variable, causing VRAM accumulation across training steps. See `docs/design/memory-management.md`.
 - **DetachState memory growth**: `DetachState` is now recursive — walks sub-graphs and calls `Detach()` on all `Detachable` modules. Previously only detached the graph's own forward-reference state buffers, leaving module-level state (hidden vectors, attention locations) attached. This caused unbounded memory growth in models with stateful loop bodies.
+- **Module device mismatch**: GRUCell, LSTMCell, and Dropout now create internal tensors (zero hidden states, dropout masks) on the same device and dtype as the input. Previously these defaulted to CPU, causing device mismatch errors after `SetDevice(CUDA)`.
 
 ## [v0.1.0] - 2026-03-07
 

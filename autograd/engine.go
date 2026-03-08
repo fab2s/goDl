@@ -85,6 +85,29 @@ func (v *Variable) BackwardWithGrad(gradOutput *tensor.Tensor) error {
 		if !node.isLeaf && node.retainGrad {
 			node.grad = grad
 		}
+
+		// Release the backward graph as we walk it. After processing a
+		// node, its gradFn (closure + captured tensors) is never used
+		// again. Nil it out so the captured tensors become GC-eligible
+		// immediately, rather than staying alive until the user's loss
+		// variable is collected.
+		//
+		// We keep node.data intact because the user may read it after
+		// backward (e.g., loss.Item()). The data tensors still become
+		// collectible sooner because the gradFn chain linking all nodes
+		// together is now broken — each non-leaf becomes an isolated
+		// struct rather than part of a deep reference chain.
+		//
+		// See docs/design/memory-management.md for the full analysis.
+		if !node.isLeaf {
+			node.gradFn = nil
+		}
+
+		// Drop the gradient for this intermediate node from the map —
+		// it has been distributed to its inputs and is no longer needed.
+		if !node.isLeaf {
+			delete(grads, node)
+		}
 	}
 
 	return nil

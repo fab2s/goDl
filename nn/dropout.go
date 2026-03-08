@@ -36,7 +36,7 @@ func (d *Dropout) Forward(inputs ...*autograd.Variable) *autograd.Variable {
 	}
 	if d.p >= 1 {
 		// Drop everything
-		zt, err := tensor.Zeros(x.Data().Shape())
+		zt, err := tensor.Zeros(x.Data().Shape(), tensor.WithDType(x.Data().DType()), tensor.WithDevice(x.Data().Device()))
 		if err != nil {
 			return autograd.ErrVariable(err)
 		}
@@ -44,7 +44,7 @@ func (d *Dropout) Forward(inputs ...*autograd.Variable) *autograd.Variable {
 	}
 
 	// Generate random mask: 1 where rand > p, 0 elsewhere
-	maskT, err := tensor.Rand(x.Data().Shape())
+	maskT, err := tensor.Rand(x.Data().Shape(), tensor.WithDType(x.Data().DType()), tensor.WithDevice(x.Data().Device()))
 	if err != nil {
 		return autograd.ErrVariable(err)
 	}

@@ -99,11 +99,11 @@ func (l *LSTMCell) Forward(inputs ...*autograd.Variable) *autograd.Variable {
 		h = state.Narrow(1, 0, hs)
 		c = state.Narrow(1, hs, hs)
 	} else {
-		ht, err := tensor.Zeros([]int64{batch, hs})
+		ht, err := tensor.Zeros([]int64{batch, hs}, tensor.WithDType(x.Data().DType()), tensor.WithDevice(x.Data().Device()))
 		if err != nil {
 			return autograd.ErrVariable(err)
 		}
-		ct, err := tensor.Zeros([]int64{batch, hs})
+		ct, err := tensor.Zeros([]int64{batch, hs}, tensor.WithDType(x.Data().DType()), tensor.WithDevice(x.Data().Device()))
 		if err != nil {
 			return autograd.ErrVariable(err)
 		}

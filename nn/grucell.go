@@ -80,7 +80,7 @@ func (g *GRUCell) Forward(inputs ...*autograd.Variable) *autograd.Variable {
 		h = inputs[1]
 	} else {
 		batch := x.Data().Shape()[0]
-		ht, err := tensor.Zeros([]int64{batch, g.HiddenSize})
+		ht, err := tensor.Zeros([]int64{batch, g.HiddenSize}, tensor.WithDType(x.Data().DType()), tensor.WithDevice(x.Data().Device()))
 		if err != nil {
 			return autograd.ErrVariable(err)
 		}
