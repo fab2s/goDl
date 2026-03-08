@@ -234,6 +234,11 @@ int godl_cuda_is_available(void);
 // Get number of CUDA devices.
 int godl_cuda_device_count(void);
 
+// Register a Go callback for CUDA OOM recovery. The callback is invoked
+// by the CUDA caching allocator when it cannot find a free memory block,
+// before falling back to cudaMalloc. No-op on CPU-only builds.
+void godl_register_cuda_gc_callback(void (*cb)(void));
+
 // --- Dtype casting ---
 
 // Cast tensor to a different dtype. Returns a new tensor.

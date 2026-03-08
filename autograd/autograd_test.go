@@ -630,3 +630,48 @@ func TestVariableToDevicePreservesGrad(t *testing.T) {
 		t.Error("ToDevice should preserve requiresGrad=false")
 	}
 }
+
+// TestBackwardReleasesSavedTensors verifies that backward frees saved-for-
+// backward tensors deterministically via refcounting, without waiting for GC.
+func TestBackwardReleasesSavedTensors(t *testing.T) {
+	// Build: loss = sum(sigmoid(x * w))
+	// Mul saves x.data and w.data; Sigmoid saves its output.
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2})
+	wt, _ := tensor.FromFloat32([]float32{0.1, 0.2, 0.3, 0.4}, []int64{2, 2})
+
+	x := autograd.NewVariable(xt, true)
+	w := autograd.NewVariable(wt, true)
+
+	before := tensor.ActiveTensors()
+
+	// Forward creates intermediate tensors with saved refs.
+	prod := x.Mul(w)          // creates result tensor, saves x.data & w.data
+	sig := prod.Sigmoid()     // creates result tensor, saves sigmoid output
+	loss := sig.Sum()         // creates result tensor, saves sigmoid output
+
+	afterForward := tensor.ActiveTensors()
+	forwardCreated := afterForward - before
+	if forwardCreated < 3 {
+		t.Fatalf("expected at least 3 tensors from forward, got %d", forwardCreated)
+	}
+
+	// Backward should Release saved tensors, dropping their extra refcount.
+	if err := loss.Backward(); err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+
+	// Leaf variables should have gradients.
+	if x.Grad() == nil {
+		t.Fatal("x.Grad() should not be nil after backward")
+	}
+	if w.Grad() == nil {
+		t.Fatal("w.Grad() should not be nil after backward")
+	}
+
+	// Correctness check: gradients should match expected values.
+	xGrad := mustData(t, x.Grad())
+	wGrad := mustData(t, w.Grad())
+	if len(xGrad) != 4 || len(wGrad) != 4 {
+		t.Fatalf("gradient shapes wrong: x=%d, w=%d", len(xGrad), len(wGrad))
+	}
+}

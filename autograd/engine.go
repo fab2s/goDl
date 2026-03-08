@@ -45,7 +45,9 @@ func (v *Variable) BackwardWithGrad(gradOutput *tensor.Tensor) error {
 	grads := make(map[*Variable]*tensor.Tensor)
 	grads[v] = gradOutput
 
-	// Walk in reverse topological order.
+	// Walk in reverse topological order (output → leaves).
+	// The root node is order[len(order)-1]; we preserve its data
+	// because the user may read it after backward (e.g., loss.Item()).
 	for i := len(order) - 1; i >= 0; i-- {
 		node := order[i]
 		grad, ok := grads[node]
@@ -61,6 +63,16 @@ func (v *Variable) BackwardWithGrad(gradOutput *tensor.Tensor) error {
 		// If this node has a gradient function, propagate backward.
 		if node.gradFn != nil {
 			inputGrads := node.gradFn.apply(grad)
+
+			// Release saved-for-backward tensors. Their refcount was
+			// incremented during forward; decrementing now frees the
+			// underlying C++ memory (including VRAM) deterministically
+			// as soon as backward no longer needs it.
+			for _, saved := range node.gradFn.saved {
+				saved.Release()
+			}
+			node.gradFn.saved = nil
+
 			for j, input := range node.gradFn.inputs {
 				if j >= len(inputGrads) || inputGrads[j] == nil {
 					continue
@@ -74,6 +86,14 @@ func (v *Variable) BackwardWithGrad(gradOutput *tensor.Tensor) error {
 					if err := acc.Err(); err != nil {
 						return fmt.Errorf("autograd: accumulating gradient at %s: %w", node.gradFn.name, err)
 					}
+					// Release the old accumulator — it's been replaced
+					// by acc and is no longer referenced. Guard against
+					// aliasing: in self-ops like x.Add(x), the apply
+					// function returns the incoming grad directly, so
+					// existing may be the same tensor as grad.
+					if existing != grad {
+						existing.Release()
+					}
 					grads[input] = acc
 				} else {
 					grads[input] = inputGrads[j]
@@ -86,26 +106,14 @@ func (v *Variable) BackwardWithGrad(gradOutput *tensor.Tensor) error {
 			node.grad = grad
 		}
 
-		// Release the backward graph as we walk it. After processing a
-		// node, its gradFn (closure + captured tensors) is never used
-		// again. Nil it out so the captured tensors become GC-eligible
-		// immediately, rather than staying alive until the user's loss
-		// variable is collected.
-		//
-		// We keep node.data intact because the user may read it after
-		// backward (e.g., loss.Item()). The data tensors still become
-		// collectible sooner because the gradFn chain linking all nodes
-		// together is now broken — each non-leaf becomes an isolated
-		// struct rather than part of a deep reference chain.
-		//
-		// See docs/design/memory-management.md for the full analysis.
 		if !node.isLeaf {
+			// Release the backward graph. After processing a node, its
+			// gradFn (closure + captured tensors) is never used again.
+			// Nil it out so captured tensors become GC-eligible sooner.
 			node.gradFn = nil
-		}
 
-		// Drop the gradient for this intermediate node from the map —
-		// it has been distributed to its inputs and is no longer needed.
-		if !node.isLeaf {
+			// Drop the gradient for this intermediate node from the
+			// map — it has been distributed to its inputs.
 			delete(grads, node)
 		}
 	}
@@ -114,11 +122,15 @@ func (v *Variable) BackwardWithGrad(gradOutput *tensor.Tensor) error {
 }
 
 // accumulateGrad adds a gradient to a leaf variable's accumulated gradient.
+// If a previous gradient exists (from a prior backward pass without
+// ZeroGrad), the old tensor is Released before being replaced.
 func (v *Variable) accumulateGrad(grad *tensor.Tensor) {
 	if v.grad == nil {
 		v.grad = grad
 	} else {
-		v.grad = v.grad.Add(grad)
+		old := v.grad
+		v.grad = old.Add(grad)
+		old.Release()
 	}
 }
 

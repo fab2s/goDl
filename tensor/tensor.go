@@ -17,12 +17,15 @@ import (
 //	result := x.Matmul(w).Add(b).ReLU()
 //	if err := result.Err(); err != nil { ... }
 //
-// Tensors are safe to use after the Go garbage collector collects them —
-// a finalizer releases the underlying C memory. For tighter control in
-// hot loops, use Release() or Scopes.
+// Tensors are reference-counted. The autograd engine calls Retain/Release
+// to manage saved-for-backward tensors deterministically, freeing C++
+// memory (including VRAM) as soon as backward finishes with each tensor —
+// without waiting for Go's garbage collector. A GC finalizer remains as
+// a safety net for any tensor not explicitly released.
 type Tensor struct {
-	raw *libtorch.Tensor // nil if error tensor or already released
-	err error            // non-nil if this tensor represents an error
+	raw  *libtorch.Tensor // nil if error tensor or already released
+	refs int64            // atomic reference count; 1 from wrap(), 0 for error tensors
+	err  error            // non-nil if this tensor represents an error
 }
 
 // tracking allocated tensor count for debugging/testing
@@ -34,15 +37,13 @@ func ActiveTensors() int64 {
 	return activeTensors.Load()
 }
 
-// wrap creates a Tensor from a raw libtorch tensor and sets up the
-// GC finalizer. This is the only place where raw tensors enter the
-// public API.
+// wrap creates a Tensor from a raw libtorch tensor, initializes its
+// reference count to 1, and sets up a GC finalizer as a safety net.
+// This is the only place where raw tensors enter the public API.
 func wrap(raw *libtorch.Tensor) *Tensor {
-	t := &Tensor{raw: raw}
+	t := &Tensor{raw: raw, refs: 1}
 	activeTensors.Add(1)
-	runtime.SetFinalizer(t, func(t *Tensor) {
-		t.release()
-	})
+	runtime.SetFinalizer(t, (*Tensor).release)
 	return t
 }
 
@@ -52,25 +53,41 @@ func errTensor(err error) *Tensor {
 	return &Tensor{err: err}
 }
 
-// release frees the underlying C tensor. Safe to call multiple times.
+// Retain increments the reference count, keeping the underlying C++
+// tensor alive until a matching Release is called. Used by autograd
+// to save tensors for backward without depending on GC timing.
+func (t *Tensor) Retain() {
+	if t.raw == nil {
+		return
+	}
+	atomic.AddInt64(&t.refs, 1)
+}
+
+// release decrements the reference count and frees the C++ tensor
+// when it reaches zero. Called by the GC finalizer as a safety net
+// and by Release for explicit lifecycle management.
 func (t *Tensor) release() {
-	if t.raw != nil {
+	if t.raw == nil {
+		return
+	}
+	if atomic.AddInt64(&t.refs, -1) == 0 {
 		t.raw.Free()
 		t.raw = nil
 		activeTensors.Add(-1)
+		runtime.SetFinalizer(t, nil)
 	}
 }
 
-// Release explicitly frees the tensor's underlying memory. After calling
-// Release, the tensor is in an error state and operations on it will
-// return an error.
+// Release decrements the reference count and frees the underlying
+// C++ memory when no references remain. After the last Release,
+// the tensor is in an error state and operations on it will return
+// an error.
 //
-// This is optional — the GC finalizer handles cleanup automatically.
-// Use Release in hot loops or when memory pressure is a concern.
+// For tensors not managed by autograd, this behaves identically to
+// the previous immediate-free semantics (refcount goes from 1 to 0).
+// The GC finalizer remains as a safety net for unreleased tensors.
 func (t *Tensor) Release() {
 	t.release()
-	// Clear the finalizer since we've already cleaned up.
-	runtime.SetFinalizer(t, nil)
 }
 
 // Err returns the error carried by this tensor, or nil if the tensor

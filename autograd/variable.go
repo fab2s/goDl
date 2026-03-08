@@ -37,10 +37,25 @@ type Variable struct {
 
 // gradFn records how a variable was created, linking it to its inputs.
 // The backward pass walks these links in reverse topological order.
+//
+// The saved field holds tensors that were Retained during forward for
+// use in the backward closure. The engine Releases them after apply()
+// returns, freeing C++ memory (including VRAM) deterministically
+// without waiting for Go's garbage collector.
 type gradFn struct {
-	name   string      // e.g. "AddBackward", for debugging
-	inputs []*Variable // back-edges to input variables
+	name   string            // e.g. "AddBackward", for debugging
+	inputs []*Variable       // back-edges to input variables
+	saved  []*tensor.Tensor  // Retained during forward, Released after backward
 	apply  func(gradOutput *tensor.Tensor) []*tensor.Tensor
+}
+
+// saveForBackward Retains each tensor and returns them as a slice
+// for storage in gradFn.saved. Called during forward op construction.
+func saveForBackward(tensors ...*tensor.Tensor) []*tensor.Tensor {
+	for _, t := range tensors {
+		t.Retain()
+	}
+	return tensors
 }
 
 // NewVariable creates a leaf variable from an existing tensor.

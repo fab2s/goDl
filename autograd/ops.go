@@ -86,6 +86,7 @@ func (v *Variable) Mul(other *Variable) *Variable {
 		fn = &gradFn{
 			name:   "MulBackward",
 			inputs: []*Variable{v, other},
+			saved:  saveForBackward(vData, otherData),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				gradV := unbroadcast(grad.Mul(otherData), vShape)
 				gradOther := unbroadcast(grad.Mul(vData), otherShape)
@@ -119,6 +120,7 @@ func (v *Variable) Matmul(other *Variable) *Variable {
 		fn = &gradFn{
 			name:   "MatmulBackward",
 			inputs: []*Variable{v, other},
+			saved:  saveForBackward(vData, otherData),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				var gradV, gradOther *tensor.Tensor
 				switch {
@@ -172,6 +174,7 @@ func (v *Variable) ReLU() *Variable {
 		fn = &gradFn{
 			name:   "ReLUBackward",
 			inputs: []*Variable{v},
+			saved:  saveForBackward(inputData),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				mask := inputData.GTScalar(0)
 				return []*tensor.Tensor{grad.Mul(mask)}
@@ -197,6 +200,7 @@ func (v *Variable) Sigmoid() *Variable {
 		fn = &gradFn{
 			name:   "SigmoidBackward",
 			inputs: []*Variable{v},
+			saved:  saveForBackward(output),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				// σ'(x) = σ(x) * (1 - σ(x))
 				oneMinusOut := output.OnesLike().Sub(output)
@@ -223,6 +227,7 @@ func (v *Variable) Tanh() *Variable {
 		fn = &gradFn{
 			name:   "TanhBackward",
 			inputs: []*Variable{v},
+			saved:  saveForBackward(output),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				// tanh'(x) = 1 - tanh²(x)
 				outSquared := output.Mul(output)
@@ -250,6 +255,7 @@ func (v *Variable) Sum() *Variable {
 		fn = &gradFn{
 			name:   "SumBackward",
 			inputs: []*Variable{v},
+			saved:  saveForBackward(inputData),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				// Sum backward: gradient flows to every element equally.
 				// grad is scalar; expand to input shape.
@@ -300,6 +306,7 @@ func (v *Variable) Exp() *Variable {
 		fn = &gradFn{
 			name:   "ExpBackward",
 			inputs: []*Variable{v},
+			saved:  saveForBackward(output),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				return []*tensor.Tensor{grad.Mul(output)}
 			},
@@ -323,6 +330,7 @@ func (v *Variable) Log() *Variable {
 		fn = &gradFn{
 			name:   "LogBackward",
 			inputs: []*Variable{v},
+			saved:  saveForBackward(result),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				// d/dx ln(x) = 1/x
 				// Compute 1/input as exp(-log(input)) = exp(-output)
@@ -396,6 +404,7 @@ func (v *Variable) SumDim(dim int, keepdim bool) *Variable {
 		fn = &gradFn{
 			name:   "SumDimBackward",
 			inputs: []*Variable{v},
+			saved:  saveForBackward(inputData),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				g := grad
 				if !keepdim {
@@ -479,6 +488,7 @@ func (v *Variable) Softmax(dim int) *Variable {
 		fn = &gradFn{
 			name:   "SoftmaxBackward",
 			inputs: []*Variable{v},
+			saved:  saveForBackward(output),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				gy := grad.Mul(output)
 				sumGy := gy.SumDim(dim, true)
@@ -505,6 +515,7 @@ func (v *Variable) Select(dim int, index int64) *Variable {
 		fn = &gradFn{
 			name:   "SelectBackward",
 			inputs: []*Variable{v},
+			saved:  saveForBackward(inputData),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				zeros := inputData.ZerosLike()
 				return []*tensor.Tensor{zeros.SelectScatter(grad, dim, index)}
@@ -530,6 +541,7 @@ func (v *Variable) Narrow(dim int, start, length int64) *Variable {
 		fn = &gradFn{
 			name:   "NarrowBackward",
 			inputs: []*Variable{v},
+			saved:  saveForBackward(inputData),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				zeros := inputData.ZerosLike()
 				return []*tensor.Tensor{zeros.NarrowScatter(grad, dim, start)}
@@ -585,6 +597,7 @@ func (v *Variable) MeanDim(dim int, keepdim bool) *Variable {
 		fn = &gradFn{
 			name:   "MeanDimBackward",
 			inputs: []*Variable{v},
+			saved:  saveForBackward(inputData),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				dimSize := float64(inputData.Shape()[dim])
 				g := grad
@@ -622,6 +635,7 @@ func (v *Variable) IndexSelect(dim int, index *tensor.Tensor) *Variable {
 		fn = &gradFn{
 			name:   "IndexSelectBackward",
 			inputs: []*Variable{v},
+			saved:  saveForBackward(inputData, index),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				// Scatter gradients back to the positions they came from.
 				zeros := inputData.ZerosLike()
@@ -648,6 +662,7 @@ func (v *Variable) Sqrt() *Variable {
 		fn = &gradFn{
 			name:   "SqrtBackward",
 			inputs: []*Variable{v},
+			saved:  saveForBackward(output),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				// d/dx sqrt(x) = 1 / (2*sqrt(x)) = 0.5 / sqrt(x)
 				return []*tensor.Tensor{grad.Div(output.MulScalar(2))}
@@ -679,6 +694,7 @@ func (v *Variable) Div(other *Variable) *Variable {
 		fn = &gradFn{
 			name:   "DivBackward",
 			inputs: []*Variable{v, other},
+			saved:  saveForBackward(vData, otherData),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				// grad_v = grad / other
 				gradV := unbroadcast(grad.Div(otherData), vShape)
@@ -741,12 +757,14 @@ func (v *Variable) Abs() *Variable {
 	if !needsGrad(v) {
 		return newVar(result, nil)
 	}
+	inputData := v.data
 	return newVar(result, &gradFn{
 		name:   "AbsBackward",
 		inputs: []*Variable{v},
+		saved:  saveForBackward(inputData),
 		apply: func(grad *tensor.Tensor) []*tensor.Tensor {
-			pos := v.data.GTScalar(0)
-			neg := v.data.Neg().GTScalar(0)
+			pos := inputData.GTScalar(0)
+			neg := inputData.Neg().GTScalar(0)
 			sign := pos.Sub(neg)
 			return []*tensor.Tensor{grad.Mul(sign)}
 		},
@@ -766,11 +784,13 @@ func (v *Variable) Pow(exponent float64) *Variable {
 	if !needsGrad(v) {
 		return newVar(result, nil)
 	}
+	inputData := v.data
 	return newVar(result, &gradFn{
 		name:   "PowBackward",
 		inputs: []*Variable{v},
+		saved:  saveForBackward(inputData),
 		apply: func(grad *tensor.Tensor) []*tensor.Tensor {
-			return []*tensor.Tensor{grad.Mul(v.data.Pow(exponent - 1).MulScalar(exponent))}
+			return []*tensor.Tensor{grad.Mul(inputData.Pow(exponent - 1).MulScalar(exponent))}
 		},
 	})
 }
@@ -788,11 +808,13 @@ func (v *Variable) Clamp(minVal, maxVal float64) *Variable {
 	if !needsGrad(v) {
 		return newVar(result, nil)
 	}
+	inputData := v.data
 	return newVar(result, &gradFn{
 		name:   "ClampBackward",
 		inputs: []*Variable{v},
+		saved:  saveForBackward(inputData),
 		apply: func(grad *tensor.Tensor) []*tensor.Tensor {
-			mask := v.data.GEScalar(minVal).Mul(v.data.LEScalar(maxVal))
+			mask := inputData.GEScalar(minVal).Mul(inputData.LEScalar(maxVal))
 			return []*tensor.Tensor{grad.Mul(mask)}
 		},
 	})
@@ -942,6 +964,7 @@ func (v *Variable) Conv2d(weight, bias *Variable, stride, padding, dilation []in
 		fn = &gradFn{
 			name:   "Conv2dBackward",
 			inputs: inputs,
+			saved:  saveForBackward(savedInput, savedWeight),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				gi, gw, gb := tensor.Conv2dBackward(
 					grad, savedInput, savedWeight,
@@ -1030,6 +1053,7 @@ func (v *Variable) ConvTranspose2d(weight, bias *Variable, stride, padding, outp
 		fn = &gradFn{
 			name:   "ConvTranspose2dBackward",
 			inputs: inputs,
+			saved:  saveForBackward(savedInput, savedWeight),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				gi, gw, gb := tensor.ConvTranspose2dBackward(
 					grad, savedInput, savedWeight,
@@ -1065,6 +1089,7 @@ func (v *Variable) AdaptiveAvgPool2d(outputSize []int64) *Variable {
 		fn = &gradFn{
 			name:   "AdaptiveAvgPool2dBackward",
 			inputs: []*Variable{v},
+			saved:  saveForBackward(savedInput),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				return []*tensor.Tensor{tensor.AdaptiveAvgPool2dBackward(grad, savedInput)}
 			},
@@ -1100,6 +1125,7 @@ func (v *Variable) GridSample(grid *Variable, mode, paddingMode int, alignCorner
 		fn = &gradFn{
 			name:   "GridSampleBackward",
 			inputs: inputs,
+			saved:  saveForBackward(savedInput, savedGrid),
 			apply: func(grad *tensor.Tensor) []*tensor.Tensor {
 				gi, gg := tensor.GridSampleBackward(
 					grad, savedInput, savedGrid,

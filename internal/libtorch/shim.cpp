@@ -929,3 +929,36 @@ extern "C" int godl_cuda_is_available(void) {
 extern "C" int godl_cuda_device_count(void) {
     return (int)torch::cuda::device_count();
 }
+
+// --- CUDA OOM → GC callback ---
+//
+// When the CUDA caching allocator cannot find a free block in its pool,
+// it invokes all registered FreeMemoryCallback instances before falling
+// back to cudaMalloc. We register one that calls into Go to trigger
+// garbage collection, freeing unreachable tensors' VRAM on demand.
+//
+// The callback fires only under VRAM pressure — zero cost in the happy path.
+
+static void (*godl_gc_callback)(void) = nullptr;
+
+#ifdef GODL_CUDA
+#include <c10/cuda/CUDACachingAllocator.h>
+
+namespace c10 {
+class GoDlGCCallback : public FreeMemoryCallback {
+public:
+    bool Execute() override {
+        if (godl_gc_callback) {
+            godl_gc_callback();
+            return true;
+        }
+        return false;
+    }
+};
+REGISTER_FREE_MEMORY_CALLBACK("goDl", GoDlGCCallback);
+} // namespace c10
+#endif
+
+extern "C" void godl_register_cuda_gc_callback(void (*cb)(void)) {
+    godl_gc_callback = cb;
+}

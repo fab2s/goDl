@@ -128,116 +128,193 @@ must trace from root to leaves.
 - For CPU training, this is adequate — Go's GC sees process RSS grow
 - For GPU training, the GC is still blind to VRAM
 
-### Phase 2: Native memory pressure tracking
+### Phase 2+3: Deterministic lifecycle via refcounting
 
-Give Go's GC visibility into C++ allocations so it runs when VRAM is
-filling up, not just when Go heap grows.
+**Status: implemented**
 
-**Option A: `runtime.SetMemoryLimit` + accounting**
+Go-side atomic reference counting on `Tensor`, combined with explicit
+saved-tensor tracking in `gradFn`. The backward engine releases saved
+tensors immediately after computing gradients — C++ memory (including
+VRAM) is freed deterministically without waiting for Go's GC.
 
-Track total C++ tensor bytes in an atomic counter. Increment on
-allocation, decrement on free. When the counter exceeds a threshold,
-hint the GC via `runtime.GC()` or adjust `GOGC` dynamically.
-
-```go
-var nativeBytes atomic.Int64
-
-func wrap(raw *libtorch.Tensor) *Tensor {
-    size := raw.Nbytes()
-    nativeBytes.Add(int64(size))
-    t := &Tensor{raw: raw}
-    runtime.SetFinalizer(t, func(t *Tensor) {
-        nativeBytes.Add(-int64(size))
-        t.release()
-    })
-    return t
-}
-```
-
-Pro: no API changes, works with existing finalizer flow.
-Con: still depends on finalizer timing for actual release.
-
-**Option B: Go-side reference counting**
-
-Add an atomic refcount to `Tensor`. The autograd engine calls
-`Retain()` when saving for backward, `Release()` when done. At
-count 0, the C++ tensor is freed immediately — no GC involvement.
+**Tensor refcounting (`tensor/tensor.go`):**
 
 ```go
 type Tensor struct {
     raw  *libtorch.Tensor
-    refs int64  // atomic, starts at 1
+    refs int64  // atomic; 1 from wrap(), 0 for error tensors
+    err  error
 }
 
 func (t *Tensor) Retain()  { atomic.AddInt64(&t.refs, 1) }
-func (t *Tensor) Release() {
+func (t *Tensor) release() {
     if atomic.AddInt64(&t.refs, -1) == 0 {
-        t.raw.Free()
+        t.raw.Free(); t.raw = nil
+        runtime.SetFinalizer(t, nil)
     }
 }
 ```
 
-Pro: deterministic, immediate VRAM release, ~1-2ns per refcount op.
-Con: every op must correctly Retain/Release — error-prone. Requires
-refactoring gradFn to store saved tensors explicitly (not in closures)
-so they can be Released individually after backward uses them.
+- `wrap()` initializes refs to 1 and sets a GC finalizer as safety net
+- `Retain()` increments the refcount (~1-2ns atomic op)
+- `Release()` decrements; at zero, frees C++ memory immediately
+- GC finalizer calls `release()` — safety net for leaked tensors
 
-The refcounting is needed because the same tensor can be saved by
-multiple gradFns (e.g., a weight used in two Matmul operations). You
-cannot Release a saved tensor after one gradFn without knowing whether
-another gradFn still references it.
-
-### Phase 3: Deterministic lifecycle in autograd
-
-The autograd DAG has well-defined ownership. Rather than general
-refcounting, exploit the structure:
-
-1. **Forward:** each op declares which tensors it needs for backward
-   by storing them in a `saved []*tensor.Tensor` field on `gradFn`
-   (not captured in closures).
-
-2. **Backward:** after `gradFn.apply()` runs, call `Release()` on
-   each saved tensor. The refcount (from Phase 2) ensures shared
-   tensors survive until all consumers are done.
-
-3. **End of backward:** all saved tensors have been released. The
-   only surviving tensors are leaf parameters and their gradients.
+**Saved tensors in autograd (`autograd/variable.go`, `autograd/ops.go`):**
 
 ```go
 type gradFn struct {
     name   string
     inputs []*Variable
-    saved  []*tensor.Tensor
-    apply  func(saved []*tensor.Tensor, grad *tensor.Tensor) []*tensor.Tensor
+    saved  []*tensor.Tensor  // Retained during forward, Released after backward
+    apply  func(gradOutput *tensor.Tensor) []*tensor.Tensor
 }
 ```
 
-This is the design PyTorch uses internally — `SavedVariable` with
-reference counting via `c10::intrusive_ptr`. The difference is that
-PyTorch gets refcounting "for free" from CPython's reference counting
-GC. In Go, we must add it explicitly.
+During forward, each op calls `saveForBackward()` which Retains each
+tensor that the backward closure needs. The closure still captures the
+same tensor pointers — the saved field provides a parallel lifecycle
+tracker. All 23 ops that save tensors for backward are covered:
+
+| Group | Ops | Saves |
+|-------|-----|-------|
+| Save input | ReLU, Sum, SumDim, MeanDim, Select, Narrow, IndexSelect, Abs, Pow, Clamp | input data |
+| Save output | Sigmoid, Tanh, Exp, Log, Sqrt, Softmax | forward result |
+| Save both inputs | Mul, Div, Matmul | both operands |
+| Save input+params | Conv2d, ConvTranspose2d, AdaptiveAvgPool2d, GridSample | input + weight/grid |
+
+The remaining 12 ops (Add, Sub, Neg, AddScalar, MulScalar, Reshape,
+Transpose, Squeeze, Unsqueeze, Flatten, Permute, Expand, Cat) capture
+only Go scalars/slices (shapes, dimensions) — no tensor saves needed.
+
+**Engine release (`autograd/engine.go`):**
+
+The engine performs three types of deterministic release during backward:
+
+1. **Saved tensors** — Released immediately after `apply()`:
+```go
+inputGrads := node.gradFn.apply(grad)
+for _, saved := range node.gradFn.saved {
+    saved.Release()
+}
+```
+
+2. **Old gradient accumulators** — when a variable is used multiple
+   times (skip connections, shared weights), gradients accumulate.
+   The old accumulator tensor is Released when replaced:
+```go
+if existing, ok := grads[input]; ok {
+    acc := existing.Add(inputGrads[j])
+    if existing != grad {  // guard against aliasing in self-ops
+        existing.Release()
+    }
+    grads[input] = acc
+}
+```
+
+3. **Stale leaf gradients** — `accumulateGrad` Releases the previous
+   backward's gradient when accumulating across mini-batches:
+```go
+old := v.grad
+v.grad = old.Add(grad)
+old.Release()
+```
+
+If a saved tensor is shared (e.g., a weight used in two Matmul ops),
+the refcount prevents premature free — each consumer's Release
+decrements, and the tensor is freed only when the last consumer is done.
 
 **What this achieves:**
-- Deterministic VRAM release during backward — each tensor is freed
-  the instant its last consumer finishes
-- Peak memory = forward intermediates + gradients being computed
-  (saved tensors are freed as backward progresses)
-- No dependence on Go's GC for VRAM lifecycle
-- Go finalizers remain as a safety net for leaked tensors
+- Saved-for-backward tensors freed during backward, not after GC
+- Old gradient accumulators freed immediately when replaced
+- ~1-2ns overhead per Retain/Release (Go-side atomic op)
+- Same deterministic lifecycle as PyTorch's `SavedVariable` mechanism
+- GC finalizers remain as safety net — no correctness risk
+- No `runtime.GC()` calls needed in training loops
+
+**Remaining gap (closed by Phase 4):**
+Forward intermediate result tensors (Variable.data for non-leaf nodes)
+still rely on GC for cleanup. Releasing them during backward is unsafe
+because user code may hold references to intermediate Variables (e.g.,
+reading `result.Data().Shape()` after backward). Phase 4 addresses this.
+
+### Phase 4: CUDA OOM → GC callback
+
+**Status: implemented**
+
+When the CUDA caching allocator cannot satisfy an allocation from its
+free-block pool, it invokes registered `FreeMemoryCallback` instances
+before falling back to `cudaMalloc`. We register a callback that
+triggers Go's garbage collector, freeing unreachable forward
+intermediates on demand.
+
+The `c10::FreeMemoryCallback` API has been stable since PyTorch 1.9
+(June 2021) — same namespace, same signature. goDl requires
+libtorch ≥ 2.0 (for the CUDA build; CPU builds have no version floor
+for this feature since the callback is a no-op).
+
+**C++ side (`shim.cpp`):**
+
+```cpp
+static void (*godl_gc_callback)(void) = nullptr;
+
+#ifdef GODL_CUDA
+namespace c10 {
+class GoDlGCCallback : public FreeMemoryCallback {
+public:
+    bool Execute() override {
+        if (godl_gc_callback) {
+            godl_gc_callback();
+            return true;  // may have freed memory
+        }
+        return false;
+    }
+};
+REGISTER_FREE_MEMORY_CALLBACK("goDl", GoDlGCCallback);
+} // namespace c10
+#endif
+```
+
+**Go side (`gc_callback.go`):**
+
+The callback fires while the allocator holds its `recursive_mutex`.
+Go's GC finalizers run on a separate goroutine/thread, so they cannot
+call `Free()` directly (the mutex is held by a different thread).
+
+Solution: a pending-free queue. When `gcCallbackActive > 0`, the
+`Free()` method queues handles instead of freeing directly. The
+callback thread drains the queue — recursive mutex allows re-entry
+from the same thread.
+
+```
+goTriggerGC() [on allocator thread, mutex held]:
+  1. gcCallbackActive++
+  2. runtime.GC()  →  finalizers queue handles to pendingFreeHandles
+  3. sleep(1ms)    →  let finalizer goroutine process
+  4. drain queue   →  Free() on this thread, re-enters recursive mutex
+  5. repeat once   →  second GC pass for finalizer-freed objects
+  6. gcCallbackActive--
+```
+
+**What this achieves:**
+- Zero cost in happy path — callback only fires when VRAM is tight
+- Forward intermediates freed on demand, not at GC's discretion
+- No `runtime.GC()` calls in user code or engine
+- Pending-free queue prevents deadlock with allocator's mutex
+- If GC doesn't free enough, normal OOM error propagates
 
 ---
 
 ## What NOT to do
 
-**Expose libtorch's C++ refcounting through CGo (Level 2):**
+**Expose libtorch's C++ refcounting through CGo:**
 Every `retain()`/`release()` is a CGo call (~100ns). With 36 ops and
 multiple saved tensors each, this adds measurable overhead to every
 forward+backward pass. Go-side atomic ops are ~1-2ns — 50-100x cheaper.
 
 **Add `runtime.GC()` calls throughout the engine:**
-This papers over the problem. A single GC call after backward is
-acceptable as a temporary measure; scattering them throughout the
-engine is not. The goal is deterministic lifecycle, not GC pressure.
+This papers over the problem. The goal is deterministic lifecycle, not
+GC pressure.
 
 **Manual Release() in user training loops:**
 The autograd engine knows exactly when tensors become dead. Pushing
@@ -245,17 +322,14 @@ this responsibility to users is a design failure.
 
 ---
 
-## Implementation priority
+## Implementation summary
 
-| Phase | Effort | Impact | Risk |
-|-------|--------|--------|------|
-| Phase 1: nil backward graph | ~10 lines in engine.go | High — halves post-backward memory | Zero — graph is write-once |
-| Phase 2: refcounting | ~50 lines in tensor + autograd | Medium — enables Phase 3 | Low — additive change |
-| Phase 3: deterministic release | ~200 lines across ops.go | Very high — PyTorch-level memory | Medium — touches all 36 ops |
-
-Phase 1 is a fix that should ship immediately. Phases 2+3 are
-engineering work that can be done incrementally — start with the
-highest-memory ops (Matmul, Conv2d) and expand coverage over time.
+| Phase | Status | Lines | Impact |
+|-------|--------|-------|--------|
+| Phase 1: nil backward graph | Done | ~10 in engine.go | Halves post-backward GC pressure |
+| Phase 2: refcounting | Done | ~30 in tensor.go | Enables deterministic free |
+| Phase 3: saved tensor tracking | Done | ~35 gradFn changes across ops.go + engine.go | Deterministic VRAM release during backward |
+| Phase 4: CUDA OOM → GC callback | Done | ~15 in shim.cpp + ~80 in gc_callback.go | On-demand GC when VRAM is tight |
 
 ---
 
@@ -269,5 +343,7 @@ tensors, releasing them as backward progresses.
 
 goDl uses Go's tracing GC, which is fundamentally non-deterministic
 for C memory. Phase 1 (nil-out) + Phase 2+3 (Go-side refcounting +
-deterministic release) brings goDl to parity with PyTorch's memory
-behavior — deterministic VRAM lifecycle independent of GC timing.
+deterministic release) brings goDl to near-parity with PyTorch for
+saved-for-backward tensors. Phase 4 (CUDA OOM → GC callback) closes
+the remaining gap for forward intermediates — the allocator asks Go
+for GC exactly when VRAM is tight, with zero cost in the happy path.

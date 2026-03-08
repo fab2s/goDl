@@ -79,7 +79,7 @@ Requirements: Docker (with NVIDIA Container Toolkit for GPU support).
 git clone https://github.com/fab2s/goDl.git
 cd goDl
 make image    # build dev container (Go + libtorch + CUDA)
-make test     # run all 460 tests (CPU + CUDA)
+make test     # run all 470 tests (CPU + CUDA)
 make test-cpu # run without GPU
 make doc      # local doc server (pkg.go.dev style)
 make shell    # interactive shell in container
@@ -313,7 +313,7 @@ Every differentiable path is verified against finite-difference gradients:
 - 40 autograd op-level checks (every op + compositions)
 - 10 module-level checks (every NN module, input + parameter gradients)
 - 11 exact optimizer step verifications (SGD, Adam, AdamW)
-- 460 tests total, all passing with race detector
+- 470 tests total, all passing with race detector
 
 ## Why Go for Deep Learning?
 

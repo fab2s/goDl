@@ -33,6 +33,8 @@ import (
 	"unsafe"
 )
 
+// gcCallbackActive, queueFreeHandle defined in gc_callback.go (same package).
+
 // DType represents a tensor's element type.
 type DType int
 
@@ -204,10 +206,19 @@ func (t *Tensor) Expand(shape []int64) (*Tensor, error) {
 // --- Tensor lifecycle ---
 
 // Free releases the underlying libtorch tensor. Must be called exactly once.
+//
+// When a CUDA OOM GC callback is in flight, the CUDA allocator's recursive
+// mutex is held on another thread. Freeing tensors directly would deadlock.
+// Instead, the handle is queued and freed later on the allocator's thread.
 func (t *Tensor) Free() {
 	if t.handle != nil {
-		C.godl_free_tensor(t.handle)
+		h := t.handle
 		t.handle = nil
+		if gcCallbackActive.Load() > 0 {
+			queueFreeHandle(unsafe.Pointer(h))
+		} else {
+			C.godl_free_tensor(h)
+		}
 	}
 }
 

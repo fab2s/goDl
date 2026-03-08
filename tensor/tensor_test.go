@@ -682,3 +682,65 @@ func TestToDeviceChain(t *testing.T) {
 		}
 	}
 }
+
+func TestRetainRelease(t *testing.T) {
+	x, err := tensor.Zeros([]int64{3, 3})
+	if err != nil {
+		t.Fatalf("Zeros: %v", err)
+	}
+
+	// Retain bumps the refcount — Release should NOT free.
+	x.Retain()
+	x.Release()
+	if x.Err() != nil {
+		t.Fatalf("tensor should still be valid after Retain+Release: %v", x.Err())
+	}
+	// Verify data is still accessible.
+	data, err := x.Float32Data()
+	if err != nil {
+		t.Fatalf("Float32Data should work: %v", err)
+	}
+	if len(data) != 9 {
+		t.Fatalf("expected 9 elements, got %d", len(data))
+	}
+
+	// Second Release drops refcount to 0 — should free.
+	x.Release()
+	if x.Err() == nil {
+		t.Fatalf("tensor should be in error state after final Release")
+	}
+}
+
+func TestRetainMultiple(t *testing.T) {
+	x, err := tensor.Ones([]int64{2, 2})
+	if err != nil {
+		t.Fatalf("Ones: %v", err)
+	}
+
+	x.Retain()
+	x.Retain()
+	// refs is now 3 (1 from wrap + 2 retains)
+
+	x.Release() // refs → 2
+	if x.Err() != nil {
+		t.Fatalf("should still be valid: %v", x.Err())
+	}
+
+	x.Release() // refs → 1
+	if x.Err() != nil {
+		t.Fatalf("should still be valid: %v", x.Err())
+	}
+
+	data, err := x.Float32Data()
+	if err != nil {
+		t.Fatalf("Float32Data should work: %v", err)
+	}
+	if data[0] != 1.0 {
+		t.Errorf("data[0] = %f, want 1.0", data[0])
+	}
+
+	x.Release() // refs → 0 → freed
+	if x.Err() == nil {
+		t.Fatalf("should be in error state after final Release")
+	}
+}
