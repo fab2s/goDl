@@ -1,6 +1,10 @@
 package nn
 
 import (
+	"encoding/binary"
+	"fmt"
+	"io"
+
 	"github.com/fab2s/goDl/autograd"
 	"github.com/fab2s/goDl/tensor"
 )
@@ -115,6 +119,28 @@ func optParams(opt LRAdjustable) []*Parameter {
 	default:
 		return nil
 	}
+}
+
+// SaveState writes the scaler's mutable state (current scale and growth
+// counter) for training resume.
+func (s *GradScaler) SaveState(w io.Writer) error {
+	if err := binary.Write(w, binary.LittleEndian, s.scale); err != nil {
+		return fmt.Errorf("write scale: %w", err)
+	}
+	return binary.Write(w, binary.LittleEndian, int64(s.stepsSinceG))
+}
+
+// LoadState restores the scaler's mutable state from a checkpoint.
+func (s *GradScaler) LoadState(r io.Reader) error {
+	if err := binary.Read(r, binary.LittleEndian, &s.scale); err != nil {
+		return fmt.Errorf("read scale: %w", err)
+	}
+	var steps int64
+	if err := binary.Read(r, binary.LittleEndian, &steps); err != nil {
+		return fmt.Errorf("read steps since growth: %w", err)
+	}
+	s.stepsSinceG = int(steps)
+	return nil
 }
 
 // CastParameters casts all parameter data tensors to the given dtype.

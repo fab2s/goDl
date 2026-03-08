@@ -1395,6 +1395,77 @@ func TestForwardRefDetachState(t *testing.T) {
 	t.Logf("DetachState: backward succeeded, grad=%v", gradF32(proj.Weight.Variable))
 }
 
+func TestDetachStateRecursive(t *testing.T) {
+	// Verify DetachState recurses into sub-graphs.
+	// Inner graph has forward-ref state; outer wraps it.
+	entry, _ := nn.NewLinear(2, 2)
+	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
+	proj, _ := nn.NewLinear(2, 2)
+	setLinearWeights(proj, []float32{1, 0, 0, 1}, []float32{0, 0})
+
+	inner, err := From(entry).
+		Through(&nilSafeAdd{}).Using("state").
+		Through(proj).Tag("state").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outer, err := From(inner).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+
+	// Pass 1: populate inner state.
+	outer.Forward(autograd.NewVariable(x, false))
+
+	// DetachState on OUTER should recurse into INNER.
+	outer.DetachState()
+
+	// Pass 2: backward should succeed (gradient chain broken).
+	r2 := outer.Forward(autograd.NewVariable(x, false))
+	loss := r2.Sum()
+	if err := loss.Backward(); err != nil {
+		t.Fatal("backward after recursive detach:", err)
+	}
+	if proj.Weight.Grad() == nil {
+		t.Error("proj.Weight: no gradient after recursive detach")
+	}
+}
+
+// detachableCounter is a test module implementing Detachable.
+type detachableCounter struct {
+	called int
+}
+
+func (d *detachableCounter) Forward(inputs ...*autograd.Variable) *autograd.Variable {
+	return inputs[0]
+}
+func (d *detachableCounter) Parameters() []*nn.Parameter { return nil }
+func (d *detachableCounter) Detach()                     { d.called++ }
+
+func TestDetachStateCallsDetachable(t *testing.T) {
+	// Verify DetachState calls Detach on modules implementing Detachable.
+	mod := &detachableCounter{}
+	g, err := From(mod).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g.DetachState()
+
+	if mod.called != 1 {
+		t.Errorf("Detach called %d times, want 1", mod.called)
+	}
+
+	g.DetachState()
+	if mod.called != 2 {
+		t.Errorf("Detach called %d times after second DetachState, want 2", mod.called)
+	}
+}
+
 func TestForwardRefLoop(t *testing.T) {
 	// Recurrent state inside a loop body.
 	// Body graph: add.Using("hidden") → identity.Tag("hidden")

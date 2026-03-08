@@ -106,6 +106,78 @@ Without `DetachState`, each step's backward pass would walk through
 every previous step's computation graph — memory grows linearly with
 the number of steps. Detaching caps it at one step.
 
+#### Why DetachState is necessary
+
+Each forward pass builds a computation graph linking every Variable to
+its inputs via `gradFn` chains. When a graph has forward references,
+the state buffers hold Variables from the previous pass. Without
+detaching, step N's state carries gradFn chains that link back through
+steps N-1, N-2, ..., 1. Memory grows O(N) with the number of training
+steps — eventually exhausting RAM.
+
+`DetachState` wraps each state buffer value in a fresh Variable with
+`requiresGrad=false`, preserving the tensor data but severing the
+gradient chain. After detaching, the next forward pass only builds a
+graph for the current step.
+
+**Call it after `Backward()`, before the next `Forward()`.** The exact
+position relative to `optimizer.Step()` doesn't matter — the optimizer
+reads gradients that are already computed.
+
+#### Recursive behavior
+
+`DetachState` is recursive. It walks the full module hierarchy:
+
+1. Detaches the graph's own forward-reference state buffers.
+2. For any sub-graph (Graph-as-Module node), calls `DetachState`
+   recursively.
+3. For any module implementing `nn.Detachable`, calls `Detach()`.
+
+This means a single `outerGraph.DetachState()` call handles the entire
+model — you never need to reach into sub-graphs manually.
+
+#### The Detachable interface
+
+Forward-reference state buffers are one source of gradient chain growth.
+The other is **module-level state** — Variables held in struct fields
+across Forward calls (hidden states, attention locations, accumulators).
+
+Modules with such state implement `nn.Detachable`:
+
+```go
+type Detachable interface {
+    Detach()
+}
+```
+
+`Detach` preserves the Variable's tensor data but breaks its gradient
+chain — the same operation as DetachState on forward-ref buffers, but
+for module-internal state:
+
+```go
+type AttentionStep struct {
+    location *autograd.Variable // updated each Forward
+    // ...
+}
+
+func (s *AttentionStep) Detach() {
+    if s.location != nil {
+        s.location = autograd.NewVariable(s.location.Data(), false)
+    }
+}
+```
+
+**Detachable vs Resettable**: `Reset` reinitializes state to zeros
+(for new sequences — called automatically before each Forward).
+`Detach` preserves values but breaks the gradient chain (for new
+training steps — called by DetachState between steps). A module can
+implement both.
+
+| Interface | When called | What it does |
+|-----------|-------------|-------------|
+| `Resettable` | Before each `Forward` (automatic) | Reinitialize to zeros |
+| `Detachable` | Between training steps via `DetachState` | Preserve values, break gradients |
+
 ### Built-in state primitive
 
 `graph.StateAdd()` is a nil-safe additive cell: it sums all non-nil

@@ -103,6 +103,36 @@ func Reset(m Module, batchSize int64) {
 	}
 }
 
+// Detachable is implemented by modules that hold autograd Variables in
+// struct fields across Forward calls (e.g., recurrent state like a
+// location or hidden state). When [Graph.DetachState] is called, it
+// walks all modules and calls Detach on any that implement this
+// interface, breaking gradient chains on retained state.
+//
+// This prevents unbounded computation graph growth across training
+// steps. Implement Detach by wrapping retained Variables in new
+// non-grad-tracking Variables while preserving their data:
+//
+//	func (s *AttentionStep) Detach() {
+//	    if s.location != nil {
+//	        s.location = autograd.NewVariable(s.location.Data(), false)
+//	    }
+//	}
+//
+// Contrast with [Resettable]: Reset reinitializes state to zeros
+// (for new sequences), while Detach preserves values but breaks
+// the gradient chain (for new training steps).
+type Detachable interface {
+	Detach()
+}
+
+// Detach calls Detach on a module if it implements [Detachable].
+func Detach(m Module) {
+	if d, ok := m.(Detachable); ok {
+		d.Detach()
+	}
+}
+
 // Traced is implemented by loop body modules that produce per-iteration
 // side outputs. The loop executor calls Trace after each iteration to
 // collect the trajectory, which is accessible via [Graph.Traces].

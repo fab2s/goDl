@@ -1,6 +1,11 @@
 package nn
 
-import "math"
+import (
+	"encoding/binary"
+	"fmt"
+	"io"
+	"math"
+)
 
 // Scheduler adjusts the learning rate of an optimizer over training.
 // Call Step() once per step (or once per epoch, depending on the schedule).
@@ -51,6 +56,21 @@ func (s *StepDecayScheduler) Step() {
 
 func (s *StepDecayScheduler) LR() float64 { return s.opt.LR() }
 
+// SaveState writes the scheduler's tick counter.
+func (s *StepDecayScheduler) SaveState(w io.Writer) error {
+	return binary.Write(w, binary.LittleEndian, int64(s.tick))
+}
+
+// LoadState restores the scheduler's tick counter.
+func (s *StepDecayScheduler) LoadState(r io.Reader) error {
+	var tick int64
+	if err := binary.Read(r, binary.LittleEndian, &tick); err != nil {
+		return fmt.Errorf("read tick: %w", err)
+	}
+	s.tick = int(tick)
+	return nil
+}
+
 // --- Cosine Annealing ---
 
 // CosineScheduler anneals the learning rate from baseLR to minLR
@@ -89,6 +109,21 @@ func (s *CosineScheduler) Step() {
 }
 
 func (s *CosineScheduler) LR() float64 { return s.opt.LR() }
+
+// SaveState writes the scheduler's tick counter.
+func (s *CosineScheduler) SaveState(w io.Writer) error {
+	return binary.Write(w, binary.LittleEndian, int64(s.tick))
+}
+
+// LoadState restores the scheduler's tick counter.
+func (s *CosineScheduler) LoadState(r io.Reader) error {
+	var tick int64
+	if err := binary.Read(r, binary.LittleEndian, &tick); err != nil {
+		return fmt.Errorf("read tick: %w", err)
+	}
+	s.tick = int(tick)
+	return nil
+}
 
 // --- Linear Warmup ---
 
@@ -130,6 +165,43 @@ func (s *WarmupScheduler) Step() {
 }
 
 func (s *WarmupScheduler) LR() float64 { return s.opt.LR() }
+
+// SaveState writes the warmup tick and the inner scheduler's state
+// (if the inner scheduler implements Stateful).
+func (s *WarmupScheduler) SaveState(w io.Writer) error {
+	if err := binary.Write(w, binary.LittleEndian, int64(s.tick)); err != nil {
+		return fmt.Errorf("write tick: %w", err)
+	}
+	if inner, ok := s.inner.(Stateful); ok {
+		if err := binary.Write(w, binary.LittleEndian, uint8(1)); err != nil {
+			return err
+		}
+		return inner.SaveState(w)
+	}
+	return binary.Write(w, binary.LittleEndian, uint8(0))
+}
+
+// LoadState restores the warmup tick and inner scheduler state.
+func (s *WarmupScheduler) LoadState(r io.Reader) error {
+	var tick int64
+	if err := binary.Read(r, binary.LittleEndian, &tick); err != nil {
+		return fmt.Errorf("read tick: %w", err)
+	}
+	s.tick = int(tick)
+
+	var hasInner uint8
+	if err := binary.Read(r, binary.LittleEndian, &hasInner); err != nil {
+		return fmt.Errorf("read inner flag: %w", err)
+	}
+	if hasInner == 1 {
+		inner, ok := s.inner.(Stateful)
+		if !ok {
+			return fmt.Errorf("checkpoint has inner scheduler state but inner does not implement Stateful")
+		}
+		return inner.LoadState(r)
+	}
+	return nil
+}
 
 // --- Reduce on Plateau ---
 
@@ -188,3 +260,27 @@ func (s *PlateauScheduler) Observe(metric float64) {
 func (s *PlateauScheduler) Step() {}
 
 func (s *PlateauScheduler) LR() float64 { return s.opt.LR() }
+
+// SaveState writes the plateau scheduler's tracking state.
+func (s *PlateauScheduler) SaveState(w io.Writer) error {
+	if err := binary.Write(w, binary.LittleEndian, s.best); err != nil {
+		return fmt.Errorf("write best: %w", err)
+	}
+	if err := binary.Write(w, binary.LittleEndian, int64(s.wait)); err != nil {
+		return fmt.Errorf("write wait: %w", err)
+	}
+	return binary.Write(w, binary.LittleEndian, s.started)
+}
+
+// LoadState restores the plateau scheduler's tracking state.
+func (s *PlateauScheduler) LoadState(r io.Reader) error {
+	if err := binary.Read(r, binary.LittleEndian, &s.best); err != nil {
+		return fmt.Errorf("read best: %w", err)
+	}
+	var wait int64
+	if err := binary.Read(r, binary.LittleEndian, &wait); err != nil {
+		return fmt.Errorf("read wait: %w", err)
+	}
+	s.wait = int(wait)
+	return binary.Read(r, binary.LittleEndian, &s.started)
+}

@@ -337,3 +337,14 @@ func (lc *loopComposite) Reset(batchSize int64) {
 	nn.Reset(lc.body, batchSize)
 	nn.Reset(lc.cond, batchSize)
 }
+
+func (lc *loopComposite) Detach() {
+	nn.Detach(lc.body)
+	nn.Detach(lc.cond)
+	if sub, ok := lc.body.(*Graph); ok {
+		sub.DetachState()
+	}
+	if sub, ok := lc.cond.(*Graph); ok {
+		sub.DetachState()
+	}
+}

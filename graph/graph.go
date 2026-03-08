@@ -504,13 +504,41 @@ func (g *Graph) ResetState() {
 	}
 }
 
-// DetachState breaks the gradient chain on all state buffers.
-// Call this between training steps to prevent unbounded graph growth.
+// DetachState breaks the gradient chain on all forward-reference state
+// buffers and any module-level state in the graph. Call this between
+// training steps to prevent unbounded computation graph growth.
+//
+// DetachState is recursive: it walks into sub-graphs and calls [nn.Detach]
+// on any module implementing [nn.Detachable]. A single call on the
+// top-level graph handles the entire hierarchy.
+//
+//	for epoch := range epochs {
+//	    for loader.Next() {
+//	        pred := g.Forward(input)
+//	        loss := nn.MSELoss(pred, target)
+//	        opt.ZeroGrad()
+//	        loss.Backward()
+//	        opt.Step()
+//	        g.DetachState() // prevents graph growth across batches
+//	    }
+//	}
 func (g *Graph) DetachState() {
+	// Detach graph-level forward-reference state buffers.
 	for _, s := range g.state {
 		if s.value != nil {
 			s.value = autograd.NewVariable(s.value.Data(), false)
 		}
+	}
+
+	// Recurse into sub-graphs and detachable modules.
+	for _, node := range g.order {
+		if node.module == nil {
+			continue
+		}
+		if sub, ok := node.module.(*Graph); ok {
+			sub.DetachState()
+		}
+		nn.Detach(node.module)
 	}
 }
 

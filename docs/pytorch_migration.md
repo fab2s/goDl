@@ -435,13 +435,13 @@ nn.ClipGradValue(model.Parameters(), 0.5)
 ## Saving and Loading
 
 ```python
-# PyTorch
+# PyTorch — model only
 torch.save(model.state_dict(), "model.pt")
 model.load_state_dict(torch.load("model.pt"))
 ```
 
 ```go
-// goDl — file path convenience
+// goDl — model only
 nn.SaveParametersFile("model.bin", model.Parameters())
 nn.LoadParametersFile("model.bin", model.Parameters())
 
@@ -449,6 +449,90 @@ nn.LoadParametersFile("model.bin", model.Parameters())
 nn.SaveParameters(writer, model.Parameters())
 nn.LoadParameters(reader, model.Parameters())
 ```
+
+### Full training resume (model + optimizer + scheduler)
+
+```python
+# PyTorch — manual state dict management
+torch.save({
+    'epoch': epoch,
+    'model': model.state_dict(),
+    'optimizer': optimizer.state_dict(),
+    'scheduler': scheduler.state_dict(),
+}, "checkpoint.pt")
+
+ckpt = torch.load("checkpoint.pt")
+model.load_state_dict(ckpt['model'])
+optimizer.load_state_dict(ckpt['optimizer'])
+scheduler.load_state_dict(ckpt['scheduler'])
+start_epoch = ckpt['epoch']
+```
+
+```go
+// goDl — composable Checkpoint type
+ckpt := nn.NewCheckpoint("checkpoints/model").
+    Model(model).
+    Add("optimizer", optimizer).
+    Add("scheduler", scheduler)
+
+// Save
+ckpt.Save(epoch)
+
+// Load (finds latest automatically)
+startEpoch, err := ckpt.Load()
+```
+
+## Detaching Hidden State
+
+In recurrent models, hidden state carries gradient chains across
+training steps. Without detachment, the computation graph grows
+without bound. Both frameworks require explicit detachment, but
+the mechanism differs.
+
+```python
+# PyTorch — manual per-variable detachment
+hidden = model.init_hidden(batch_size)
+for batch in dataloader:
+    hidden = hidden.detach()  # new tensor, no grad history
+    output, hidden = model(batch.input, hidden)
+    loss = criterion(output, batch.target)
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad()
+
+# For multiple hidden states (e.g., LSTM h and c):
+h, c = h.detach(), c.detach()
+```
+
+```go
+// goDl — single call detaches everything
+for loader.Next() {
+    output := model.Forward(input)
+    loss := nn.MSELoss(output, target)
+    loss.Backward()
+    model.DetachState() // detaches all state buffers + Detachable modules
+    optimizer.Step()
+    optimizer.ZeroGrad()
+}
+```
+
+Key differences:
+
+| Aspect | PyTorch | goDl |
+|--------|---------|------|
+| Granularity | Per-variable: `h = h.detach()` | Per-graph: `model.DetachState()` |
+| Discovery | You must know which variables to detach | Automatic — walks all state buffers and Detachable modules |
+| Sub-models | Manual for each sub-module's state | Recursive — one call handles the full hierarchy |
+| Module support | N/A (no equivalent interface) | `nn.Detachable` — modules declare their own detach logic |
+
+In PyTorch, forgetting to detach a single hidden state variable causes
+the same unbounded memory growth. In goDl, `DetachState` on the
+outermost graph covers everything.
+
+### When is it needed?
+
+Only for models with cross-step state — forward references in goDl,
+hidden states in PyTorch. Plain feedforward models don't need it.
 
 ## Weight Initialization
 

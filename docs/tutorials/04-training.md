@@ -212,6 +212,153 @@ Since losses are typically computed outside the graph (they need both
 graph outputs and external targets), `Record` is the natural way to
 track them alongside graph-internal metrics.
 
+## Stateful Graphs — DetachState
+
+If your model uses forward references (recurrent state carried between
+Forward calls), you **must** call `DetachState()` between training
+steps. Without it, the autograd computation graph grows without bound —
+each step's state buffer holds gradFn chains linking back through all
+previous steps. Memory grows O(N) with the number of training steps.
+
+```go
+model.SetTraining(true)
+
+for loader.Next() {
+    inT, tgtT := loader.Batch()
+    input := autograd.NewVariable(inT, true)
+    target := autograd.NewVariable(tgtT, false)
+
+    pred := model.Forward(input)
+    loss := nn.MSELoss(pred, target)
+
+    optimizer.ZeroGrad()
+    loss.Backward()
+    nn.ClipGradNorm(model.Parameters(), 1.0)
+
+    model.DetachState() // break gradient chains on state buffers
+    optimizer.Step()
+}
+```
+
+`DetachState` is recursive — it walks sub-graphs and calls `Detach()`
+on any module implementing `nn.Detachable`. A single call on the
+outermost graph handles the entire model hierarchy.
+
+**When is it needed?** Only for graphs with forward references — where
+`Using("x")` appears before `Tag("x")` in the builder chain. Plain
+feedforward graphs (no recurrent state) don't need it.
+
+For full details on the mechanism and the `Detachable` interface, see
+[Advanced Graphs — Managing state](06-advanced-graphs.md#managing-state).
+
+### The PyTorch equivalent
+
+In PyTorch, the same problem appears with RNN hidden states. The
+standard pattern is to detach the hidden state between training steps:
+
+```python
+# PyTorch — manual hidden state detachment
+hidden = model.init_hidden(batch_size)
+for batch in dataloader:
+    hidden = hidden.detach()  # or hidden.detach_() for in-place
+    output, hidden = model(batch.input, hidden)
+    loss = criterion(output, batch.target)
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad()
+```
+
+`hidden.detach()` creates a new tensor with the same data but no
+gradient history — exactly what goDl's `DetachState` does to state
+buffers. The difference is that PyTorch requires you to track and
+detach each hidden state variable yourself, while goDl handles it
+with a single `DetachState()` call on the graph.
+
+PyTorch also offers `retain_graph=True` on `backward()` to keep the
+computation graph alive for multiple backward passes, but this is
+orthogonal — it's about reusing the graph, not about breaking cross-step
+chains.
+
+## Checkpoints — Training Resume
+
+The `nn.Checkpoint` type bundles model parameters, optimizer state,
+scheduler state, and epoch number into a single atomic file.
+
+### Setup
+
+```go
+model, _ := buildModel()
+optimizer := nn.NewAdam(model.Parameters(), 0.001)
+scheduler := nn.Cosine(optimizer, 100)
+
+ckpt := nn.NewCheckpoint("checkpoints/mymodel").
+    Model(model).
+    Add("optimizer", optimizer).
+    Add("scheduler", scheduler)
+```
+
+The path prefix determines file location. Checkpoint files are named
+`{prefix}_{epoch:06d}.ckpt` — for example, `checkpoints/mymodel_000010.ckpt`.
+
+### Save during training
+
+```go
+for epoch := range numEpochs {
+    // ... training loop ...
+
+    if epoch%10 == 0 {
+        if err := ckpt.Save(epoch); err != nil {
+            log.Fatal(err)
+        }
+    }
+}
+```
+
+### Resume from latest
+
+```go
+ckpt := nn.NewCheckpoint("checkpoints/mymodel").
+    Model(model).
+    Add("optimizer", optimizer).
+    Add("scheduler", scheduler)
+
+startEpoch, err := ckpt.Load()
+if err != nil {
+    // No checkpoint found — start from scratch.
+    startEpoch = 0
+}
+
+for epoch := startEpoch; epoch < numEpochs; epoch++ {
+    // ... training loop ...
+}
+```
+
+`Load()` finds the most recent checkpoint file (by filename sort),
+restores all state, and returns the saved epoch number. All named
+components must match between save and load — mismatched names or
+counts produce an error.
+
+### What gets saved
+
+| Component | What's persisted |
+|-----------|-----------------|
+| Model (`Model(m)`) | All parameter tensors (names, shapes, values) |
+| SGD | Learning rate, velocity tensors (if momentum > 0) |
+| Adam / AdamW | Learning rate, step counter, m and v moment estimates |
+| StepDecay / Cosine | Tick counter |
+| Warmup | Tick counter + inner scheduler state |
+| Plateau | Best value, wait counter, started flag |
+| GradScaler | Scale factor, steps-since-growth counter |
+
+Any type implementing the `nn.Stateful` interface can be added:
+
+```go
+type Stateful interface {
+    SaveState(w io.Writer) error
+    LoadState(r io.Reader) error
+}
+```
+
 ## Eval Mode
 
 Switch to eval mode for inference. This affects Dropout (becomes identity) and BatchNorm (uses running statistics):

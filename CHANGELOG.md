@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Flush timing**: ETA, Elapsed, FlushCount, LastFlushDuration — built-in wall-clock tracking.
 - **WriteLog**: human-readable training log with per-epoch metrics, timing, and ETA.
 - **FormatDuration**: training-friendly duration formatting (42ms, 1.2s, 2m05s).
+- **Checkpoint**: composable training resume — bundles model parameters, optimizer state, scheduler state, and epoch into a single file. Supports `Save(epoch)` / `Load()` / `LoadEpoch(n)`.
+- **Stateful interface**: `SaveState(io.Writer) / LoadState(io.Reader)` implemented by all optimizers (SGD, Adam, AdamW), schedulers (StepDecay, Cosine, Warmup, Plateau), and GradScaler.
+- **Detachable interface**: `nn.Detachable` for modules holding Variables in struct fields across Forward calls. `nn.Detach(m)` helper.
+
+### Fixed
+- **DetachState memory growth**: `DetachState` is now recursive — walks sub-graphs and calls `Detach()` on all `Detachable` modules. Previously only detached the graph's own forward-reference state buffers, leaving module-level state (hidden vectors, attention locations) attached. This caused unbounded memory growth in models with stateful loop bodies.
 
 ## [v0.1.0] - 2026-03-07
 
