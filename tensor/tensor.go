@@ -44,6 +44,7 @@ func wrap(raw *libtorch.Tensor) *Tensor {
 	t := &Tensor{raw: raw, refs: 1}
 	activeTensors.Add(1)
 	runtime.SetFinalizer(t, (*Tensor).release)
+	libtorch.EnforceVRAMBudget()
 	return t
 }
 

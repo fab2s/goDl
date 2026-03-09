@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **autograd.Scope**: deterministic batch-level tensor cleanup without `runtime.GC()`. `NewScope()` tracks all intermediate Variables created by autograd ops; `Close()` releases their C++ tensors immediately. Leaf parameters and user-created Variables (via `NewVariable`) are not tracked — only op results. Eliminates GC-induced GPU pipeline stalls in training loops. Thread-safe for parallel graph execution.
+- **VRAM-aware automatic memory management**: proactive GC trigger based on physical VRAM usage. The C++ shim tracks allocated CUDA bytes via an atomic counter (piggybacked on existing tensor creation/destruction, zero extra CGo roundtrips). Every 100 tensor creations, Go reads the counter and triggers `runtime.GC()` if allocated CUDA bytes exceed 90% of physical VRAM. This prevents modern NVIDIA drivers from silently spilling to system RAM. Three layers of defense: (1) proactive GC at 90% VRAM, (2) hard allocator cap at 95% via `SetMemoryFraction`, (3) existing OOM callback as last resort. Override the budget via `GODL_VRAM_BUDGET` environment variable (e.g. `"0.80"`).
 - **Record**: inject external metrics (losses, hit rates) into the Collect/Flush pipeline.
 - **Trend.Latest**: convenience accessor for the most recent epoch value.
 - **Flush timing**: ETA, Elapsed, FlushCount, LastFlushDuration — built-in wall-clock tracking.

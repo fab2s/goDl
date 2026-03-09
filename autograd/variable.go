@@ -74,13 +74,17 @@ func NewVariable(data *tensor.Tensor, requiresGrad bool) *Variable {
 
 // newVar creates a non-leaf variable as the result of an operation.
 // If none of the inputs require gradients, tracking is skipped.
+// The variable is registered with the active Scope (if any) for
+// deterministic cleanup.
 func newVar(data *tensor.Tensor, fn *gradFn) *Variable {
-	return &Variable{
+	v := &Variable{
 		data:         data,
 		requiresGrad: fn != nil,
 		gradFn:       fn,
 		isLeaf:       false,
 	}
+	track(v)
+	return v
 }
 
 // errVariable creates a variable that carries an error.

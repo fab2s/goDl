@@ -40,6 +40,7 @@ static inline void _godl_register_gc_cb() {
 import "C"
 
 import (
+	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -109,8 +110,40 @@ func goTriggerGC() {
 	gcCallbackActive.Add(-1)
 }
 
+// DefaultVRAMFraction is the default cap on VRAM usage. The allocator
+// triggers the GC callback instead of letting the driver spill to RAM.
+const DefaultVRAMFraction = 0.95
+
+// SetMemoryFraction caps the CUDA caching allocator's VRAM usage on the
+// given device. fraction is in [0, 1]. When the allocator hits this
+// limit, it fires FreeMemoryCallback (the GC callback) instead of
+// requesting more memory from the driver.
+//
+// Called automatically during init with DefaultVRAMFraction (0.95).
+// This is a hard safety net behind the proactive VRAM budget check
+// (see vram_budget.go). Most users should tune GODL_VRAM_BUDGET instead.
+func SetMemoryFraction(fraction float64, device int) error {
+	errStr := C.godl_set_memory_fraction(C.double(fraction), C.int(device))
+	if errStr != nil {
+		defer C.godl_free_string(errStr)
+		return fmt.Errorf("SetMemoryFraction: %s", C.GoString(errStr))
+	}
+	return nil
+}
+
 func init() {
 	if CUDAAvailable() {
 		C._godl_register_gc_cb()
+
+		// Hard cap: prevent the allocator from using more than 95%
+		// of VRAM. Acts as a safety net behind the proactive GC.
+		for i := range CUDADeviceCount() {
+			_ = SetMemoryFraction(DefaultVRAMFraction, i)
+		}
+
+		// Proactive GC: set VRAM budget based on physical VRAM.
+		// When tracked CUDA allocations exceed the budget, tensor
+		// creation triggers runtime.GC() to finalize zombies.
+		initVRAMBudget()
 	}
 }

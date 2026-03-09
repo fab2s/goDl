@@ -10,8 +10,18 @@
 
 #include "shim.h"
 #include <torch/torch.h>
+#include <atomic>
 #include <cstring>
 #include <string>
+
+#ifdef GODL_BUILD_CUDA
+#include <cuda_runtime.h>
+#endif
+
+// Tracks total bytes held by CUDA tensors created through wrap().
+// Decremented in godl_free_tensor. Only CUDA tensors are counted —
+// CPU tensors don't contribute to VRAM pressure.
+static std::atomic<int64_t> godl_cuda_alloc_bytes{0};
 
 // Helper: convert a C++ exception to a malloc'd C string.
 static char* make_error(const std::string& msg) {
@@ -65,7 +75,11 @@ static int from_device(const torch::Device& dev) {
 // Helper: wrap a new torch::Tensor into a heap-allocated pointer.
 // The caller (Go) owns this pointer and must call godl_free_tensor.
 static TorchTensor wrap(torch::Tensor t) {
-    return (TorchTensor)(new torch::Tensor(std::move(t)));
+    auto* p = new torch::Tensor(std::move(t));
+    if (p->is_cuda()) {
+        godl_cuda_alloc_bytes += static_cast<int64_t>(p->nbytes());
+    }
+    return (TorchTensor)p;
 }
 
 // Helper: unwrap a TorchTensor handle back to a reference.
@@ -165,7 +179,11 @@ extern "C" char* godl_expand(TorchTensor t, int64_t* new_shape, int ndim,
 
 extern "C" void godl_free_tensor(TorchTensor t) {
     if (t) {
-        delete (torch::Tensor*)t;
+        auto* p = (torch::Tensor*)t;
+        if (p->is_cuda()) {
+            godl_cuda_alloc_bytes -= static_cast<int64_t>(p->nbytes());
+        }
+        delete p;
     }
 }
 
@@ -961,4 +979,35 @@ REGISTER_FREE_MEMORY_CALLBACK("goDl", GoDlGCCallback);
 
 extern "C" void godl_register_cuda_gc_callback(void (*cb)(void)) {
     godl_gc_callback = cb;
+}
+
+extern "C" int64_t godl_cuda_allocated_bytes() {
+    return godl_cuda_alloc_bytes.load(std::memory_order_relaxed);
+}
+
+extern "C" void godl_cuda_mem_info(int64_t* free_bytes, int64_t* total_bytes) {
+#ifdef GODL_BUILD_CUDA
+    size_t free = 0, total = 0;
+    cudaMemGetInfo(&free, &total);
+    *free_bytes = static_cast<int64_t>(free);
+    *total_bytes = static_cast<int64_t>(total);
+#else
+    *free_bytes = 0;
+    *total_bytes = 0;
+#endif
+}
+
+extern "C" char* godl_set_memory_fraction(double fraction, int device) {
+#ifdef GODL_BUILD_CUDA
+    try {
+        c10::cuda::CUDACachingAllocator::setMemoryFraction(fraction, device);
+        return nullptr;
+    } catch (const std::exception& e) {
+        return make_error(e.what());
+    }
+#else
+    (void)fraction;
+    (void)device;
+    return nullptr;
+#endif
 }
