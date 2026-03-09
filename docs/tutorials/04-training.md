@@ -435,6 +435,23 @@ restores all state, and returns the saved epoch number. All named
 components must match between save and load — mismatched names or
 counts produce an error.
 
+Checkpoint loading is device-aware: parameters and optimizer state
+(momentum buffers, moment estimates) are automatically moved to the
+device they were on before the load. This means you can call
+`SetDevice` before loading, and the restored tensors end up on the
+correct device:
+
+```go
+model.SetDevice(tensor.CUDA)
+optimizer := nn.NewAdam(model.Parameters(), 0.001)
+
+ckpt := nn.NewCheckpoint("checkpoints/mymodel").
+    Model(model).
+    Add("optimizer", optimizer)
+
+startEpoch, err := ckpt.Load()  // params + optimizer state land on CUDA
+```
+
 ### What gets saved
 
 | Component | What's persisted |

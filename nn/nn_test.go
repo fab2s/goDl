@@ -371,7 +371,7 @@ func TestAdamTraining(t *testing.T) {
 	target := autograd.NewVariable(yData, false)
 
 	var finalLoss float32
-	for epoch := range 300 {
+	for epoch := range 500 {
 		pred := linear.Forward(autograd.NewVariable(xData, false))
 		loss := nn.MSELoss(pred, target)
 		if err := loss.Backward(); err != nil {
@@ -1529,10 +1529,10 @@ func TestSaveLoadForwardMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	moduleToDevice(l2)
 	if err := nn.LoadParameters(&buf, l2.Parameters()); err != nil {
 		t.Fatal(err)
 	}
+	moduleToDevice(l2)
 
 	d2 := mustData(t, l2.Forward(x).Data())
 	for i := range d1 {

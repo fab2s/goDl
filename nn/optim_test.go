@@ -243,7 +243,10 @@ func TestAdamMultipleParamsExact(t *testing.T) {
 func TestAdamNilGradSkip(t *testing.T) {
 	skipIfDeviceUnavailable(t)
 	p1 := makeParam(t, []float32{1.0}, []float32{0.5}, []int64{1})
-	p2 := nn.NewParameter(func() *tensor.Tensor { t2, _ := tensor.FromFloat32([]float32{2.0}, []int64{1}, tensor.WithDevice(testDevice)); return t2 }(), "no_grad")
+	p2 := nn.NewParameter(func() *tensor.Tensor {
+		t2, _ := tensor.FromFloat32([]float32{2.0}, []int64{1}, tensor.WithDevice(testDevice))
+		return t2
+	}(), "no_grad")
 	// p2 has no gradient set.
 	opt := nn.NewAdam([]*nn.Parameter{p1, p2}, 0.001)
 	opt.Step()

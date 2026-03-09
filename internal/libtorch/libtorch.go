@@ -209,7 +209,11 @@ func (t *Tensor) Expand(shape []int64) (*Tensor, error) {
 //
 // When a CUDA OOM GC callback is in flight, the CUDA allocator's recursive
 // mutex is held on another thread. Freeing tensors directly would deadlock.
-// Instead, the handle is queued and freed later on the allocator's thread.
+// Instead, the handle is queued and freed later.
+//
+// Outside the callback, Free drains any pending handles before freeing its
+// own. This ensures handles queued during a previous GC callback are
+// returned to the CUDA allocator promptly.
 func (t *Tensor) Free() {
 	if t.handle != nil {
 		h := t.handle
@@ -217,6 +221,7 @@ func (t *Tensor) Free() {
 		if gcCallbackActive.Load() > 0 {
 			queueFreeHandle(unsafe.Pointer(h))
 		} else {
+			drainPendingFrees()
 			C.godl_free_tensor(h)
 		}
 	}

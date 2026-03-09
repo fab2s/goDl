@@ -626,8 +626,8 @@ func TestRecordAndCollectMix(t *testing.T) {
 	// Mix Collect (from graph) and Record (external) in same epoch.
 	x, _ := tensor.FromFloat32([]float32{4}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x, false))
-	g.Collect("out")       // graph value: 4
-	g.Record("out", 6)     // external value: 6
+	g.Collect("out")   // graph value: 4
+	g.Record("out", 6) // external value: 6
 
 	g.Flush()
 	trend := g.Trend("out")
@@ -649,9 +649,9 @@ func TestRecordFlushTrend(t *testing.T) {
 
 	// Simulate 3 epochs of purely external metrics.
 	epochs := [][]float64{
-		{1.0, 0.8, 0.6},   // mean = 0.8
-		{0.5, 0.4, 0.3},   // mean = 0.4
-		{0.2, 0.15, 0.1},  // mean = 0.15
+		{1.0, 0.8, 0.6},  // mean = 0.8
+		{0.5, 0.4, 0.3},  // mean = 0.4
+		{0.2, 0.15, 0.1}, // mean = 0.15
 	}
 
 	for _, epoch := range epochs {

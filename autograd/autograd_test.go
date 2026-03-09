@@ -674,9 +674,9 @@ func TestBackwardReleasesSavedTensors(t *testing.T) {
 	before := tensor.ActiveTensors()
 
 	// Forward creates intermediate tensors with saved refs.
-	prod := x.Mul(w)          // creates result tensor, saves x.data & w.data
-	sig := prod.Sigmoid()     // creates result tensor, saves sigmoid output
-	loss := sig.Sum()         // creates result tensor, saves sigmoid output
+	prod := x.Mul(w)      // creates result tensor, saves x.data & w.data
+	sig := prod.Sigmoid() // creates result tensor, saves sigmoid output
+	loss := sig.Sum()     // creates result tensor, saves sigmoid output
 
 	afterForward := tensor.ActiveTensors()
 	forwardCreated := afterForward - before

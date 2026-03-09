@@ -282,25 +282,95 @@ Go's GC finalizers run on a separate goroutine/thread, so they cannot
 call `Free()` directly (the mutex is held by a different thread).
 
 Solution: a pending-free queue. When `gcCallbackActive > 0`, the
-`Free()` method queues handles instead of freeing directly. The
-callback thread drains the queue — recursive mutex allows re-entry
-from the same thread.
+`Free()` method queues handles instead of freeing directly.
 
 ```
 goTriggerGC() [on allocator thread, mutex held]:
   1. gcCallbackActive++
   2. runtime.GC()  →  finalizers queue handles to pendingFreeHandles
   3. sleep(1ms)    →  let finalizer goroutine process
-  4. drain queue   →  Free() on this thread, re-enters recursive mutex
-  5. repeat once   →  second GC pass for finalizer-freed objects
-  6. gcCallbackActive--
+  4. gcCallbackActive--
 ```
+
+Critically, we do **not** drain the pending-free queue inside the
+callback. The queued handles are drained lazily by the next
+`Tensor.Free()` call outside the callback context:
+
+```go
+func (t *Tensor) Free() {
+    if t.handle != nil {
+        h := t.handle
+        t.handle = nil
+        if gcCallbackActive.Load() > 0 {
+            queueFreeHandle(unsafe.Pointer(h))
+        } else {
+            drainPendingFrees()  // free any queued handles first
+            C.godl_free_tensor(h)
+        }
+    }
+}
+```
+
+This happens naturally during explicit `Release()` calls in the
+backward pass or GC finalization between training steps.
+
+**`runtime.KeepAlive` on CGo call sites (`tensor/ops.go`, `tensor/tensor.go`):**
+
+Go's tracing GC can collect a `*tensor.Tensor` wrapper as soon as no
+live Go code references it — even while a CGo call using its C++
+handle is still running. If the GC callback fires during that CGo
+call, the finalizer queues the handle for freeing, and a subsequent
+drain frees it out from under the active C++ operation.
+
+The standard Go solution (used by `os.File`, `net.Conn`, etc.) is
+`runtime.KeepAlive(t)` after each CGo call. This inserts a reference
+that the compiler cannot optimize away, guaranteeing the wrapper
+survives until the CGo call returns:
+
+```go
+raw, err := libtorch.Matmul(t.raw, other.raw)
+runtime.KeepAlive(t)
+runtime.KeepAlive(other)
+```
+
+Applied to all ~50 CGo call sites in `tensor/ops.go` (arithmetic,
+activations, reductions, convolutions, device transfer) and
+`tensor/tensor.go` (Shape, DType, Device, data access methods).
+
+**Why draining during the callback caused use-after-free:**
+
+The original implementation drained the pending-free queue inside
+`goTriggerGC()`. This was a use-after-free because the callback runs
+on the **same thread and call stack** as the CGo operation that
+triggered the allocation:
+
+```
+Go code: t.Matmul(other)
+  → CGo call: godl_matmul(t.handle, other.handle)
+    → C++: at::matmul needs temp memory
+      → CUDA allocator: no free blocks → FreeMemoryCallback
+        → goTriggerGC():
+            runtime.GC() → finalizer marks `other` as dead (no more
+                            Go references after the CGo boundary)
+            drainPendingFrees() → frees other.handle
+        ← returns to allocator
+      ← allocator retries allocation
+    ← at::matmul continues... using freed other.handle → SIGSEGV
+```
+
+Symptoms varied: corrupted vtable, "tensor does not have a device",
+TLS assertion failures. Only triggered under VRAM pressure with large
+tensors. The combination of `runtime.KeepAlive` (prevents premature
+GC) and lazy draining (prevents same-stack freeing) eliminates this
+class of bug entirely.
 
 **What this achieves:**
 - Zero cost in happy path — callback only fires when VRAM is tight
 - Forward intermediates freed on demand, not at GC's discretion
 - No `runtime.GC()` calls in user code or engine
 - Pending-free queue prevents deadlock with allocator's mutex
+- KeepAlive prevents premature GC of tensor wrappers during CGo calls
+- Lazy drain prevents use-after-free on the allocator's call stack
 - If GC doesn't free enough, normal OOM error propagates
 
 ---
@@ -311,6 +381,19 @@ goTriggerGC() [on allocator thread, mutex held]:
 Every `retain()`/`release()` is a CGo call (~100ns). With 36 ops and
 multiple saved tensors each, this adds measurable overhead to every
 forward+backward pass. Go-side atomic ops are ~1-2ns — 50-100x cheaper.
+
+**Drain pending frees inside the GC callback:**
+The callback runs on the same thread/call-stack as the CGo operation
+that triggered the allocation. Draining there frees handles that C++
+code higher in the stack is still using. Always drain lazily from the
+next `Free()` call outside the callback.
+
+**Omit `runtime.KeepAlive` after CGo calls:**
+Without KeepAlive, Go's GC can collect a `*tensor.Tensor` wrapper
+while its C++ handle is passed to a CGo function. If the GC callback
+fires during that call, the finalizer queues the handle, and the next
+drain frees it. This is a use-after-free that only manifests under
+VRAM pressure — extremely hard to reproduce and debug.
 
 **Add `runtime.GC()` calls throughout the engine:**
 This papers over the problem. The goal is deterministic lifecycle, not
@@ -329,7 +412,7 @@ this responsibility to users is a design failure.
 | Phase 1: nil backward graph | Done | ~10 in engine.go | Halves post-backward GC pressure |
 | Phase 2: refcounting | Done | ~30 in tensor.go | Enables deterministic free |
 | Phase 3: saved tensor tracking | Done | ~35 gradFn changes across ops.go + engine.go | Deterministic VRAM release during backward |
-| Phase 4: CUDA OOM → GC callback | Done | ~15 in shim.cpp + ~80 in gc_callback.go | On-demand GC when VRAM is tight |
+| Phase 4: CUDA OOM → GC callback | Done | ~15 in shim.cpp + ~80 in gc_callback.go + ~50 KeepAlive in tensor/ | On-demand GC when VRAM is tight |
 
 ---
 

@@ -81,28 +81,32 @@ func drainPendingFrees() {
 
 // goTriggerGC is called from C++ when the CUDA caching allocator needs
 // memory. It triggers Go's GC to finalize unreachable tensor wrappers,
-// then drains the pending-free queue on this thread (which holds the
-// allocator's recursive mutex).
+// queuing their handles for deferred freeing.
+//
+// We intentionally do NOT drain the pending-free queue here. This
+// function runs on the same thread and call stack as the CGo operation
+// that triggered the CUDA allocation. Draining would call
+// godl_free_tensor for handles that C++ code above us (e.g., matmul,
+// to_device) is still actively using — a use-after-free that manifests
+// as SIGSEGV with varying symptoms (corrupted vtable, "tensor does not
+// have a device", TLS assertion failures).
+//
+// The queued handles are drained by the next Tensor.Free() call that
+// occurs outside the callback context, which happens naturally during
+// explicit Release() calls in the backward pass or GC finalization
+// between training steps.
 //
 //export goTriggerGC
 func goTriggerGC() {
 	gcCallbackActive.Add(1)
-	defer gcCallbackActive.Add(-1)
 
-	// First pass: GC identifies unreachable tensors and queues finalizers.
+	// GC identifies unreachable tensors and schedules finalizers.
 	// The finalizer goroutine runs release() → sees gcCallbackActive > 0
 	// → adds handles to the pending list instead of calling Free directly.
 	runtime.GC()
 	time.Sleep(time.Millisecond) // let the finalizer goroutine process
 
-	// Drain on this thread — recursive mutex allows re-entry.
-	drainPendingFrees()
-
-	// Second pass: collect objects whose finalizers ran in the first pass
-	// (e.g., the Tensor structs themselves, now that raw is nil).
-	runtime.GC()
-	time.Sleep(time.Millisecond)
-	drainPendingFrees()
+	gcCallbackActive.Add(-1)
 }
 
 func init() {

@@ -470,7 +470,7 @@ func TestCheckpointSaveLoad(t *testing.T) {
 	origLR := opt.LR()
 
 	// Save checkpoint.
-	ckpt := nn.NewCheckpoint(dir + "/run").
+	ckpt := nn.NewCheckpoint(dir+"/run").
 		Model(linear).
 		Add("optimizer", opt).
 		Add("scheduler", sched)
@@ -488,7 +488,7 @@ func TestCheckpointSaveLoad(t *testing.T) {
 	opt2 := nn.NewAdam(linear2.Parameters(), 0.1)
 	sched2 := nn.NewCosineScheduler(opt2, 0.001, 0, 100)
 
-	ckpt2 := nn.NewCheckpoint(dir + "/run").
+	ckpt2 := nn.NewCheckpoint(dir+"/run").
 		Model(linear2).
 		Add("optimizer", opt2).
 		Add("scheduler", sched2)
@@ -584,13 +584,13 @@ func TestCheckpointNoModel(t *testing.T) {
 		stepOptimizer(t, makeParams(t), opt)
 	}
 
-	ckpt := nn.NewCheckpoint(dir + "/state").Add("optimizer", opt)
+	ckpt := nn.NewCheckpoint(dir+"/state").Add("optimizer", opt)
 	if err := ckpt.Save(7); err != nil {
 		t.Fatal(err)
 	}
 
 	opt2 := nn.NewAdam(makeParams(t), 0.1)
-	ckpt2 := nn.NewCheckpoint(dir + "/state").Add("optimizer", opt2)
+	ckpt2 := nn.NewCheckpoint(dir+"/state").Add("optimizer", opt2)
 	epoch, err := ckpt2.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -608,7 +608,7 @@ func TestCheckpointStateMismatch(t *testing.T) {
 	dir := t.TempDir()
 
 	opt := nn.NewAdam(makeParams(t), 0.001)
-	ckpt := nn.NewCheckpoint(dir + "/state").
+	ckpt := nn.NewCheckpoint(dir+"/state").
 		Add("optimizer", opt).
 		Add("scheduler", nn.NewCosineScheduler(opt, 0.001, 0, 100))
 	if err := ckpt.Save(1); err != nil {
@@ -617,7 +617,7 @@ func TestCheckpointStateMismatch(t *testing.T) {
 
 	// Load with different component count.
 	opt2 := nn.NewAdam(makeParams(t), 0.001)
-	ckpt2 := nn.NewCheckpoint(dir + "/state").Add("optimizer", opt2)
+	ckpt2 := nn.NewCheckpoint(dir+"/state").Add("optimizer", opt2)
 	if _, err := ckpt2.Load(); err == nil {
 		t.Fatal("expected error on state count mismatch")
 	}
@@ -628,14 +628,14 @@ func TestCheckpointNameMismatch(t *testing.T) {
 	dir := t.TempDir()
 
 	opt := nn.NewAdam(makeParams(t), 0.001)
-	ckpt := nn.NewCheckpoint(dir + "/state").Add("optimizer", opt)
+	ckpt := nn.NewCheckpoint(dir+"/state").Add("optimizer", opt)
 	if err := ckpt.Save(1); err != nil {
 		t.Fatal(err)
 	}
 
 	// Load with different name.
 	opt2 := nn.NewAdam(makeParams(t), 0.001)
-	ckpt2 := nn.NewCheckpoint(dir + "/state").Add("wrong_name", opt2)
+	ckpt2 := nn.NewCheckpoint(dir+"/state").Add("wrong_name", opt2)
 	if _, err := ckpt2.Load(); err == nil {
 		t.Fatal("expected error on name mismatch")
 	}

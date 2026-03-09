@@ -758,7 +758,7 @@ func (c *tracedCounter) Forward(inputs ...*autograd.Variable) *autograd.Variable
 	return inputs[0] // pass through
 }
 func (c *tracedCounter) Parameters() []*nn.Parameter { return nil }
-func (c *tracedCounter) Reset(batchSize int64, device tensor.Device) {
+func (c *tracedCounter) Reset(batchSize int64, _ tensor.Device) {
 	c.count = 0
 	c.resetCt++
 	c.lastBatch = batchSize

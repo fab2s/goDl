@@ -43,9 +43,9 @@ type Variable struct {
 // returns, freeing C++ memory (including VRAM) deterministically
 // without waiting for Go's garbage collector.
 type gradFn struct {
-	name   string            // e.g. "AddBackward", for debugging
-	inputs []*Variable       // back-edges to input variables
-	saved  []*tensor.Tensor  // Retained during forward, Released after backward
+	name   string           // e.g. "AddBackward", for debugging
+	inputs []*Variable      // back-edges to input variables
+	saved  []*tensor.Tensor // Retained during forward, Released after backward
 	apply  func(gradOutput *tensor.Tensor) []*tensor.Tensor
 }
 

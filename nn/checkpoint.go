@@ -176,7 +176,9 @@ func readParam(r io.Reader, p *Parameter, index int) error {
 	if err != nil {
 		return fmt.Errorf("parameter %q: create tensor: %w", name, err)
 	}
-	p.SetData(t)
+	// Move loaded tensor to the device the parameter was on (e.g. CUDA).
+	dev := p.Data().Device()
+	p.SetData(t.ToDevice(dev))
 	return nil
 }
 

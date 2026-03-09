@@ -127,6 +127,9 @@ func (o *SGD) LoadState(r io.Reader) error {
 		if err != nil {
 			return fmt.Errorf("velocity[%d]: %w", i, err)
 		}
+		if t != nil {
+			t = t.ToDevice(o.params[i].Data().Device())
+		}
 		o.velocity[i] = t
 	}
 	return nil
@@ -265,14 +268,21 @@ func (a *Adam) LoadState(r io.Reader) error {
 	}
 	a.t = int(t)
 	for i := range a.params {
+		dev := a.params[i].Data().Device()
 		m, err := readTensorState(r)
 		if err != nil {
 			return fmt.Errorf("m[%d]: %w", i, err)
+		}
+		if m != nil {
+			m = m.ToDevice(dev)
 		}
 		a.m[i] = m
 		v, err := readTensorState(r)
 		if err != nil {
 			return fmt.Errorf("v[%d]: %w", i, err)
+		}
+		if v != nil {
+			v = v.ToDevice(dev)
 		}
 		a.v[i] = v
 	}
@@ -333,13 +343,13 @@ func (w *AdamW) ZeroGrad() {
 
 // SaveState writes the AdamW optimizer's state. Delegates to the
 // embedded Adam since AdamW's own weightDecay is configuration, not state.
-func (aw *AdamW) SaveState(w io.Writer) error {
-	return aw.adam.SaveState(w)
+func (w *AdamW) SaveState(wr io.Writer) error {
+	return w.adam.SaveState(wr)
 }
 
 // LoadState restores AdamW state from a checkpoint.
-func (aw *AdamW) LoadState(r io.Reader) error {
-	return aw.adam.LoadState(r)
+func (w *AdamW) LoadState(r io.Reader) error {
+	return w.adam.LoadState(r)
 }
 
 // pow computes base^exp for small integer exponents.
