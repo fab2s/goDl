@@ -5,7 +5,13 @@ All notable changes to goDl will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [v0.2.0] - 2026-03-13
+
+> **Project status:** goDl is no longer actively developed. Go's garbage collector
+> cannot deterministically manage GPU (VRAM) memory, which creates fundamental
+> limitations for training workloads. The project has been succeeded by
+> **[floDl](https://github.com/fab2s/floDl)**, a Rust port where `Drop` provides
+> deterministic resource management. goDl remains available as-is under MIT license.
 
 ### Added
 - **autograd.Scope**: deterministic batch-level tensor cleanup without `runtime.GC()`. `NewScope()` tracks all intermediate Variables created by autograd ops; `Close()` releases their C++ tensors immediately. Leaf parameters and user-created Variables (via `NewVariable`) are not tracked — only op results. Eliminates GC-induced GPU pipeline stalls in training loops. Thread-safe for parallel graph execution.
@@ -45,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **ClipGradValue device**: `nn.ClipGradValue` now preserves the gradient's device when clamping. Previously could produce CPU gradients from CUDA parameters.
 - **BatchNorm lazy device alignment**: `BatchNorm.Forward` moves running statistics to match the input device if they differ, preventing device mismatch when BatchNorm is nested inside user-defined composite modules that aren't direct graph nodes.
 - **ETA calculation**: training start is now recorded on first Forward (not first Flush), so epoch 0's duration is included in the per-epoch average. ETA is available after 1 flush instead of requiring 2. `Elapsed()` and `WriteLog` updated consistently.
+- **CPU-only build**: `godl_cuda_is_available` and `godl_cuda_device_count` now compile correctly without CUDA headers (guarded by `GODL_BUILD_CUDA`).
+
+### Testing
+- 482 tests, all passing with race detector (up from 460 in v0.1.0).
 
 ## [v0.1.0] - 2026-03-07
 
@@ -99,5 +109,5 @@ Initial public release.
 - Docker-based builds: CUDA image and CPU-only image (~2GB vs ~21GB).
 - GitHub Actions CI with CPU Docker image.
 
-[Unreleased]: https://github.com/fab2s/goDl/compare/v0.1.0...HEAD
+[v0.2.0]: https://github.com/fab2s/goDl/compare/v0.1.0...v0.2.0
 [v0.1.0]: https://github.com/fab2s/goDl/releases/tag/v0.1.0

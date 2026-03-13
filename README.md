@@ -9,6 +9,14 @@ A Go-native deep learning framework built on libtorch.<br>
 Same GPU kernels as PyTorch. No Python. No GIL. Just Go.
 </p>
 
+> **Status: Succeeded by [floDl](https://github.com/fab2s/floDl)**
+>
+> goDl is no longer actively developed. Go's garbage collector cannot
+> deterministically manage GPU (VRAM) memory, creating fundamental limitations
+> for training workloads. **[floDl](https://github.com/fab2s/floDl)** is a
+> complete Rust port where `Drop` provides deterministic resource management.
+> goDl remains available as-is under MIT license.
+
 <p align="center">
   <a href="https://github.com/fab2s/goDl/actions/workflows/ci.yml"><img src="https://github.com/fab2s/goDl/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://pkg.go.dev/github.com/fab2s/goDl"><img src="https://pkg.go.dev/badge/github.com/fab2s/goDl.svg" alt="Go Reference"></a>
@@ -79,7 +87,7 @@ Requirements: Docker (with NVIDIA Container Toolkit for GPU support).
 git clone https://github.com/fab2s/goDl.git
 cd goDl
 make image    # build dev container (Go + libtorch + CUDA)
-make test     # run all 470 tests (CPU + CUDA)
+make test     # run all 482 tests (CPU + CUDA)
 make test-cpu # run without GPU
 make doc      # local doc server (pkg.go.dev style)
 make shell    # interactive shell in container
@@ -313,7 +321,7 @@ Every differentiable path is verified against finite-difference gradients:
 - 40 autograd op-level checks (every op + compositions)
 - 10 module-level checks (every NN module, input + parameter gradients)
 - 11 exact optimizer step verifications (SGD, Adam, AdamW)
-- 470 tests total, all passing with race detector
+- 482 tests total, all passing with race detector
 
 ## Why Go for Deep Learning?
 

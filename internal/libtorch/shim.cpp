@@ -941,11 +941,19 @@ extern "C" void godl_free_string(char* s) {
 }
 
 extern "C" int godl_cuda_is_available(void) {
+#ifdef GODL_BUILD_CUDA
     return torch::cuda::is_available() ? 1 : 0;
+#else
+    return 0;
+#endif
 }
 
 extern "C" int godl_cuda_device_count(void) {
+#ifdef GODL_BUILD_CUDA
     return (int)torch::cuda::device_count();
+#else
+    return 0;
+#endif
 }
 
 // --- CUDA OOM → GC callback ---
