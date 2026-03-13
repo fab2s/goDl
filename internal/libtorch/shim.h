@@ -239,6 +239,20 @@ int godl_cuda_device_count(void);
 // before falling back to cudaMalloc. No-op on CPU-only builds.
 void godl_register_cuda_gc_callback(void (*cb)(void));
 
+// Set the maximum fraction of VRAM the CUDA caching allocator may use
+// on the given device. When the limit is reached, the allocator triggers
+// FreeMemoryCallback (the GC callback) instead of letting the driver
+// silently spill to system RAM. No-op on CPU-only builds.
+// Returns error string on failure (caller frees), NULL on success.
+char* godl_set_memory_fraction(double fraction, int device);
+
+// Returns the total bytes currently held by CUDA tensors tracked by goDl.
+// Only counts CUDA tensors — CPU tensors are excluded.
+int64_t godl_cuda_allocated_bytes(void);
+
+// Query physical VRAM on device 0. No-op (returns zeros) on CPU-only builds.
+void godl_cuda_mem_info(int64_t* free_bytes, int64_t* total_bytes);
+
 // --- Dtype casting ---
 
 // Cast tensor to a different dtype. Returns a new tensor.

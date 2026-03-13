@@ -20,6 +20,7 @@ func moduleGradCheck(t *testing.T, name string, m nn.Module,
 	f func(nn.Module, []*autograd.Variable) *autograd.Variable,
 	atol float64) {
 	t.Helper()
+	moduleToDevice(m)
 
 	for _, p := range m.Parameters() {
 		p.ZeroGrad()
@@ -56,12 +57,12 @@ func moduleGradCheck(t *testing.T, name string, m nn.Module,
 			plus := make([]float32, numel)
 			copy(plus, origData)
 			plus[ei] += float32(gcEps)
-			tPlus, _ := tensor.FromFloat32(plus, shape)
+			tPlus, _ := tensor.FromFloat32(plus, shape, tensor.WithDevice(testDevice))
 
 			minus := make([]float32, numel)
 			copy(minus, origData)
 			minus[ei] -= float32(gcEps)
-			tMinus, _ := tensor.FromFloat32(minus, shape)
+			tMinus, _ := tensor.FromFloat32(minus, shape, tensor.WithDevice(testDevice))
 
 			var fPlus, fMinus float64
 			autograd.NoGrad(func() {
@@ -97,7 +98,7 @@ func moduleGradCheck(t *testing.T, name string, m nn.Module,
 			plus := make([]float32, numel)
 			copy(plus, origData)
 			plus[ei] += float32(gcEps)
-			tPlus, _ := tensor.FromFloat32(plus, shape)
+			tPlus, _ := tensor.FromFloat32(plus, shape, tensor.WithDevice(testDevice))
 
 			var fPlus float64
 			p.SetData(tPlus)
@@ -108,7 +109,7 @@ func moduleGradCheck(t *testing.T, name string, m nn.Module,
 			minus := make([]float32, numel)
 			copy(minus, origData)
 			minus[ei] -= float32(gcEps)
-			tMinus, _ := tensor.FromFloat32(minus, shape)
+			tMinus, _ := tensor.FromFloat32(minus, shape, tensor.WithDevice(testDevice))
 
 			var fMinus float64
 			p.SetData(tMinus)
@@ -170,15 +171,17 @@ func sumLoss(m nn.Module, v []*autograd.Variable) *autograd.Variable {
 // --- Module gradient checks ---
 
 func TestModuleGradCheckLinear(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	m, err := nn.NewLinear(3, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	x, _ := tensor.FromFloat32([]float32{0.5, -0.3, 0.8, -0.2, 0.6, 0.1}, []int64{2, 3})
+	x, _ := tensor.FromFloat32([]float32{0.5, -0.3, 0.8, -0.2, 0.6, 0.1}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	moduleGradCheck(t, "Linear", m, []*tensor.Tensor{x}, sumLoss, gcAtol)
 }
 
 func TestModuleGradCheckLayerNorm(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	m, err := nn.NewLayerNorm(4)
 	if err != nil {
 		t.Fatal(err)
@@ -186,11 +189,12 @@ func TestModuleGradCheckLayerNorm(t *testing.T) {
 	x, _ := tensor.FromFloat32([]float32{
 		1.0, 2.0, 3.0, 4.0,
 		-1.0, 0.5, 1.5, 3.0,
-	}, []int64{2, 4})
+	}, []int64{2, 4}, tensor.WithDevice(testDevice))
 	moduleGradCheck(t, "LayerNorm", m, []*tensor.Tensor{x}, sumLoss, gcAtol)
 }
 
 func TestModuleGradCheckBatchNorm(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	m, err := nn.NewBatchNorm(3)
 	if err != nil {
 		t.Fatal(err)
@@ -199,11 +203,12 @@ func TestModuleGradCheckBatchNorm(t *testing.T) {
 		1.0, 2.0, 3.0,
 		-1.0, 0.0, 1.0,
 		0.5, 1.5, 2.5,
-	}, []int64{3, 3})
+	}, []int64{3, 3}, tensor.WithDevice(testDevice))
 	moduleGradCheck(t, "BatchNorm", m, []*tensor.Tensor{x}, sumLoss, gcAtol)
 }
 
 func TestModuleGradCheckConv2d(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	m, err := nn.NewConv2d(1, 1, 3)
 	if err != nil {
 		t.Fatal(err)
@@ -214,72 +219,78 @@ func TestModuleGradCheckConv2d(t *testing.T) {
 		0.5, 0.6, 0.7, 0.8,
 		0.9, 0.1, 0.2, 0.3,
 		0.4, 0.5, 0.6, 0.7,
-	}, []int64{1, 1, 4, 4})
+	}, []int64{1, 1, 4, 4}, tensor.WithDevice(testDevice))
 	moduleGradCheck(t, "Conv2d", m, []*tensor.Tensor{x}, sumLoss, gcAtol)
 }
 
 func TestModuleGradCheckGRUCell(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	m, err := nn.NewGRUCell(2, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	x, _ := tensor.FromFloat32([]float32{0.5, -0.3, 0.2, 0.8}, []int64{2, 2})
-	h, _ := tensor.FromFloat32([]float32{0.1, -0.1, 0.3, 0.2}, []int64{2, 2})
+	x, _ := tensor.FromFloat32([]float32{0.5, -0.3, 0.2, 0.8}, []int64{2, 2}, tensor.WithDevice(testDevice))
+	h, _ := tensor.FromFloat32([]float32{0.1, -0.1, 0.3, 0.2}, []int64{2, 2}, tensor.WithDevice(testDevice))
 	moduleGradCheck(t, "GRUCell", m, []*tensor.Tensor{x, h}, sumLoss, gcAtol)
 }
 
 func TestModuleGradCheckGRUCellNilHidden(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	m, err := nn.NewGRUCell(2, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	x, _ := tensor.FromFloat32([]float32{0.5, -0.3, 0.2, 0.8}, []int64{2, 2})
+	x, _ := tensor.FromFloat32([]float32{0.5, -0.3, 0.2, 0.8}, []int64{2, 2}, tensor.WithDevice(testDevice))
 	moduleGradCheck(t, "GRUCell_nil_h", m, []*tensor.Tensor{x}, sumLoss, gcAtol)
 }
 
 func TestModuleGradCheckLSTMCell(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	m, err := nn.NewLSTMCell(2, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	x, _ := tensor.FromFloat32([]float32{0.5, -0.3, 0.2, 0.8}, []int64{2, 2})
+	x, _ := tensor.FromFloat32([]float32{0.5, -0.3, 0.2, 0.8}, []int64{2, 2}, tensor.WithDevice(testDevice))
 	// State = cat(h, c) → [batch, 2*hiddenSize] = [2, 4]
 	state, _ := tensor.FromFloat32([]float32{
 		0.1, -0.1, 0.2, 0.3,
 		0.3, 0.2, -0.1, 0.1,
-	}, []int64{2, 4})
+	}, []int64{2, 4}, tensor.WithDevice(testDevice))
 	moduleGradCheck(t, "LSTMCell", m, []*tensor.Tensor{x, state}, sumLoss, gcAtol)
 }
 
 func TestModuleGradCheckLSTMCellNilState(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	m, err := nn.NewLSTMCell(2, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	x, _ := tensor.FromFloat32([]float32{0.5, -0.3, 0.2, 0.8}, []int64{2, 2})
+	x, _ := tensor.FromFloat32([]float32{0.5, -0.3, 0.2, 0.8}, []int64{2, 2}, tensor.WithDevice(testDevice))
 	moduleGradCheck(t, "LSTMCell_nil_state", m, []*tensor.Tensor{x}, sumLoss, gcAtol)
 }
 
 func TestModuleGradCheckEmbedding(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	m, err := nn.NewEmbedding(5, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Int64 indices — input gradcheck is skipped (non-float), only param gradients checked.
-	idx, _ := tensor.FromInt64([]int64{0, 2, 4, 1}, []int64{2, 2})
+	idx, _ := tensor.FromInt64([]int64{0, 2, 4, 1}, []int64{2, 2}, tensor.WithDevice(testDevice))
 	moduleGradCheck(t, "Embedding", m, []*tensor.Tensor{idx}, sumLoss, gcAtol)
 }
 
 // CrossEntropyLoss has a MaxDim detachment that's worth verifying.
 func TestModuleGradCheckCrossEntropyLoss(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	pred, _ := tensor.FromFloat32([]float32{
 		2.0, 1.0, 0.1,
 		0.5, 2.5, 1.0,
-	}, []int64{2, 3})
+	}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	target, _ := tensor.FromFloat32([]float32{
 		1, 0, 0,
 		0, 1, 0,
-	}, []int64{2, 3})
+	}, []int64{2, 3}, tensor.WithDevice(testDevice))
 
 	// Analytical.
 	pVar := autograd.NewVariable(pred, true)
@@ -301,12 +312,12 @@ func TestModuleGradCheckCrossEntropyLoss(t *testing.T) {
 		plus := make([]float32, numel)
 		copy(plus, origData)
 		plus[ei] += float32(gcEps)
-		tPlus, _ := tensor.FromFloat32(plus, shape)
+		tPlus, _ := tensor.FromFloat32(plus, shape, tensor.WithDevice(testDevice))
 
 		minus := make([]float32, numel)
 		copy(minus, origData)
 		minus[ei] -= float32(gcEps)
-		tMinus, _ := tensor.FromFloat32(minus, shape)
+		tMinus, _ := tensor.FromFloat32(minus, shape, tensor.WithDevice(testDevice))
 
 		var fPlus, fMinus float64
 		autograd.NoGrad(func() {

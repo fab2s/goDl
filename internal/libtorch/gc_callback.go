@@ -6,15 +6,24 @@
 // GoDlGCCallback which calls goTriggerGC via a function pointer.
 //
 // goTriggerGC triggers Go's garbage collector to finalize unreachable
-// tensor wrappers, freeing their underlying VRAM. Because the allocator
-// holds a recursive mutex during the callback, Go finalizers (which run
-// on a separate goroutine/thread) cannot free tensors directly without
-// deadlocking. Instead, Free() queues handles into a pending list when
-// gcCallbackActive > 0, and goTriggerGC drains the list on the
-// allocator's thread where the recursive mutex allows re-entry.
+// tensor wrappers. Because the allocator holds a recursive mutex during
+// the callback, Go finalizers (which run on a separate goroutine/thread)
+// cannot free tensors directly without deadlocking. Instead, Free()
+// queues handles into a pending list when gcCallbackActive > 0.
+//
+// IMPORTANT: We do NOT drain the pending list during the callback.
+// The callback runs on the same thread and call stack as the CGo
+// operation that triggered the allocation. Draining would free tensor
+// handles that C++ code above us is still using — classic
+// use-after-free. Instead, the pending list is drained by the next
+// Free() call outside the callback context.
+//
+// The CUDA allocator has fallback mechanisms (cudaMalloc, releasing
+// all cached blocks) that handle the case where the callback doesn't
+// immediately reclaim memory.
 //
 // Cost: zero in the happy path — the callback only fires when VRAM is
-// genuinely exhausted. When it fires, ~2-10ms for GC + drain.
+// genuinely exhausted. When it fires, ~2ms for GC.
 package libtorch
 
 /*
@@ -31,6 +40,7 @@ static inline void _godl_register_gc_cb() {
 import "C"
 
 import (
+	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -72,32 +82,68 @@ func drainPendingFrees() {
 
 // goTriggerGC is called from C++ when the CUDA caching allocator needs
 // memory. It triggers Go's GC to finalize unreachable tensor wrappers,
-// then drains the pending-free queue on this thread (which holds the
-// allocator's recursive mutex).
+// queuing their handles for deferred freeing.
+//
+// We intentionally do NOT drain the pending-free queue here. This
+// function runs on the same thread and call stack as the CGo operation
+// that triggered the CUDA allocation. Draining would call
+// godl_free_tensor for handles that C++ code above us (e.g., matmul,
+// to_device) is still actively using — a use-after-free that manifests
+// as SIGSEGV with varying symptoms (corrupted vtable, "tensor does not
+// have a device", TLS assertion failures).
+//
+// The queued handles are drained by the next Tensor.Free() call that
+// occurs outside the callback context, which happens naturally during
+// explicit Release() calls in the backward pass or GC finalization
+// between training steps.
 //
 //export goTriggerGC
 func goTriggerGC() {
 	gcCallbackActive.Add(1)
-	defer gcCallbackActive.Add(-1)
 
-	// First pass: GC identifies unreachable tensors and queues finalizers.
+	// GC identifies unreachable tensors and schedules finalizers.
 	// The finalizer goroutine runs release() → sees gcCallbackActive > 0
 	// → adds handles to the pending list instead of calling Free directly.
 	runtime.GC()
 	time.Sleep(time.Millisecond) // let the finalizer goroutine process
 
-	// Drain on this thread — recursive mutex allows re-entry.
-	drainPendingFrees()
+	gcCallbackActive.Add(-1)
+}
 
-	// Second pass: collect objects whose finalizers ran in the first pass
-	// (e.g., the Tensor structs themselves, now that raw is nil).
-	runtime.GC()
-	time.Sleep(time.Millisecond)
-	drainPendingFrees()
+// DefaultVRAMFraction is the default cap on VRAM usage. The allocator
+// triggers the GC callback instead of letting the driver spill to RAM.
+const DefaultVRAMFraction = 0.95
+
+// SetMemoryFraction caps the CUDA caching allocator's VRAM usage on the
+// given device. fraction is in [0, 1]. When the allocator hits this
+// limit, it fires FreeMemoryCallback (the GC callback) instead of
+// requesting more memory from the driver.
+//
+// Called automatically during init with DefaultVRAMFraction (0.95).
+// This is a hard safety net behind the proactive VRAM budget check
+// (see vram_budget.go). Most users should tune GODL_VRAM_BUDGET instead.
+func SetMemoryFraction(fraction float64, device int) error {
+	errStr := C.godl_set_memory_fraction(C.double(fraction), C.int(device))
+	if errStr != nil {
+		defer C.godl_free_string(errStr)
+		return fmt.Errorf("SetMemoryFraction: %s", C.GoString(errStr))
+	}
+	return nil
 }
 
 func init() {
 	if CUDAAvailable() {
 		C._godl_register_gc_cb()
+
+		// Hard cap: prevent the allocator from using more than 95%
+		// of VRAM. Acts as a safety net behind the proactive GC.
+		for i := range CUDADeviceCount() {
+			_ = SetMemoryFraction(DefaultVRAMFraction, i)
+		}
+
+		// Proactive GC: set VRAM budget based on physical VRAM.
+		// When tracked CUDA allocations exceed the budget, tensor
+		// creation triggers runtime.GC() to finalize zombies.
+		initVRAMBudget()
 	}
 }

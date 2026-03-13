@@ -2,6 +2,7 @@ package tensor
 
 import (
 	"fmt"
+	"runtime"
 
 	"github.com/fab2s/goDl/internal/libtorch"
 )
@@ -25,6 +26,8 @@ func (t *Tensor) Add(other *Tensor) *Tensor {
 		return other
 	}
 	raw, err := libtorch.Add(t.raw, other.raw)
+	runtime.KeepAlive(t)
+	runtime.KeepAlive(other)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -40,6 +43,8 @@ func (t *Tensor) Mul(other *Tensor) *Tensor {
 		return other
 	}
 	raw, err := libtorch.Mul(t.raw, other.raw)
+	runtime.KeepAlive(t)
+	runtime.KeepAlive(other)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -55,6 +60,8 @@ func (t *Tensor) Matmul(other *Tensor) *Tensor {
 		return other
 	}
 	raw, err := libtorch.Matmul(t.raw, other.raw)
+	runtime.KeepAlive(t)
+	runtime.KeepAlive(other)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -70,6 +77,8 @@ func (t *Tensor) Sub(other *Tensor) *Tensor {
 		return other
 	}
 	raw, err := libtorch.Sub(t.raw, other.raw)
+	runtime.KeepAlive(t)
+	runtime.KeepAlive(other)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -84,6 +93,7 @@ func (t *Tensor) ReLU() *Tensor {
 		return t
 	}
 	raw, err := libtorch.ReLU(t.raw)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -96,6 +106,7 @@ func (t *Tensor) Sigmoid() *Tensor {
 		return t
 	}
 	raw, err := libtorch.Sigmoid(t.raw)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -108,6 +119,7 @@ func (t *Tensor) Tanh() *Tensor {
 		return t
 	}
 	raw, err := libtorch.Tanh(t.raw)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -120,6 +132,7 @@ func (t *Tensor) Transpose(dim0, dim1 int) *Tensor {
 		return t
 	}
 	raw, err := libtorch.Transpose(t.raw, dim0, dim1)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -132,6 +145,7 @@ func (t *Tensor) Sum() *Tensor {
 		return t
 	}
 	raw, err := libtorch.Sum(t.raw)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -144,6 +158,7 @@ func (t *Tensor) SumDim(dim int, keepdim bool) *Tensor {
 		return t
 	}
 	raw, err := libtorch.SumDim(t.raw, dim, keepdim)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -156,6 +171,7 @@ func (t *Tensor) OnesLike() *Tensor {
 		return t
 	}
 	raw, err := libtorch.OnesLike(t.raw)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -168,6 +184,7 @@ func (t *Tensor) MulScalar(scalar float64) *Tensor {
 		return t
 	}
 	raw, err := libtorch.MulScalar(t.raw, scalar)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -180,6 +197,7 @@ func (t *Tensor) GTScalar(scalar float64) *Tensor {
 		return t
 	}
 	raw, err := libtorch.GTScalar(t.raw, scalar)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -192,6 +210,7 @@ func (t *Tensor) Reshape(shape []int64) *Tensor {
 		return t
 	}
 	raw, err := libtorch.Reshape(t.raw, shape)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -204,6 +223,7 @@ func (t *Tensor) Exp() *Tensor {
 		return t
 	}
 	raw, err := libtorch.Exp(t.raw)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -216,6 +236,7 @@ func (t *Tensor) Log() *Tensor {
 		return t
 	}
 	raw, err := libtorch.Log(t.raw)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -228,6 +249,7 @@ func (t *Tensor) AddScalar(scalar float64) *Tensor {
 		return t
 	}
 	raw, err := libtorch.AddScalar(t.raw, scalar)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -240,6 +262,7 @@ func (t *Tensor) Neg() *Tensor {
 		return t
 	}
 	raw, err := libtorch.Neg(t.raw)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -252,6 +275,7 @@ func (t *Tensor) MaxDim(dim int, keepdim bool) *Tensor {
 		return t
 	}
 	raw, err := libtorch.MaxDim(t.raw, dim, keepdim)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -264,6 +288,7 @@ func (t *Tensor) Softmax(dim int) *Tensor {
 		return t
 	}
 	raw, err := libtorch.Softmax(t.raw, dim)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -276,6 +301,7 @@ func (t *Tensor) Select(dim int, index int64) *Tensor {
 		return t
 	}
 	raw, err := libtorch.Select(t.raw, dim, index)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -288,6 +314,7 @@ func (t *Tensor) ZerosLike() *Tensor {
 		return t
 	}
 	raw, err := libtorch.ZerosLike(t.raw)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -303,6 +330,8 @@ func (t *Tensor) SelectScatter(src *Tensor, dim int, index int64) *Tensor {
 		return src
 	}
 	raw, err := libtorch.SelectScatter(t.raw, src.raw, dim, index)
+	runtime.KeepAlive(t)
+	runtime.KeepAlive(src)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -315,6 +344,7 @@ func (t *Tensor) Narrow(dim int, start, length int64) *Tensor {
 		return t
 	}
 	raw, err := libtorch.Narrow(t.raw, dim, start, length)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -330,6 +360,8 @@ func (t *Tensor) NarrowScatter(src *Tensor, dim int, start int64) *Tensor {
 		return src
 	}
 	raw, err := libtorch.NarrowScatter(t.raw, src.raw, dim, start)
+	runtime.KeepAlive(t)
+	runtime.KeepAlive(src)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -345,6 +377,8 @@ func (t *Tensor) Cat(other *Tensor, dim int) *Tensor {
 		return other
 	}
 	raw, err := libtorch.Cat2(t.raw, other.raw, dim)
+	runtime.KeepAlive(t)
+	runtime.KeepAlive(other)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -357,6 +391,7 @@ func (t *Tensor) MeanDim(dim int, keepdim bool) *Tensor {
 		return t
 	}
 	raw, err := libtorch.MeanDim(t.raw, dim, keepdim)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -372,6 +407,8 @@ func (t *Tensor) IndexSelect(dim int, index *Tensor) *Tensor {
 		return index
 	}
 	raw, err := libtorch.IndexSelect(t.raw, dim, index.raw)
+	runtime.KeepAlive(t)
+	runtime.KeepAlive(index)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -390,6 +427,9 @@ func (t *Tensor) IndexAdd(dim int, index *Tensor, src *Tensor) *Tensor {
 		return src
 	}
 	raw, err := libtorch.IndexAdd(t.raw, dim, index.raw, src.raw)
+	runtime.KeepAlive(t)
+	runtime.KeepAlive(index)
+	runtime.KeepAlive(src)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -402,6 +442,7 @@ func (t *Tensor) Sqrt() *Tensor {
 		return t
 	}
 	raw, err := libtorch.Sqrt(t.raw)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -417,6 +458,8 @@ func (t *Tensor) Div(other *Tensor) *Tensor {
 		return other
 	}
 	raw, err := libtorch.Div(t.raw, other.raw)
+	runtime.KeepAlive(t)
+	runtime.KeepAlive(other)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -431,6 +474,7 @@ func (t *Tensor) GEScalar(scalar float64) *Tensor {
 		return t
 	}
 	raw, err := libtorch.GEScalar(t.raw, scalar)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -443,6 +487,7 @@ func (t *Tensor) LEScalar(scalar float64) *Tensor {
 		return t
 	}
 	raw, err := libtorch.LEScalar(t.raw, scalar)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -455,6 +500,7 @@ func (t *Tensor) LTScalar(scalar float64) *Tensor {
 		return t
 	}
 	raw, err := libtorch.LTScalar(t.raw, scalar)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -524,6 +570,7 @@ func (t *Tensor) Permute(dims ...int) *Tensor {
 		dims64[i] = int64(d)
 	}
 	raw, err := libtorch.Permute(t.raw, dims64)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -553,6 +600,7 @@ func (t *Tensor) Min() *Tensor {
 		return t
 	}
 	raw, err := libtorch.Min(t.raw)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -565,6 +613,7 @@ func (t *Tensor) MinDim(dim int, keepdim bool) *Tensor {
 		return t
 	}
 	raw, err := libtorch.MinDim(t.raw, dim, keepdim)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -577,6 +626,7 @@ func (t *Tensor) ArgMax(dim int, keepdim bool) *Tensor {
 		return t
 	}
 	raw, err := libtorch.ArgMax(t.raw, dim, keepdim)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -596,6 +646,9 @@ func (t *Tensor) Where(x, y *Tensor) *Tensor {
 		return y
 	}
 	raw, err := libtorch.Where(t.raw, x.raw, y.raw)
+	runtime.KeepAlive(t)
+	runtime.KeepAlive(x)
+	runtime.KeepAlive(y)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -622,6 +675,7 @@ func (t *Tensor) Abs() *Tensor {
 		return t
 	}
 	raw, err := libtorch.Abs(t.raw)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -634,6 +688,7 @@ func (t *Tensor) Pow(exponent float64) *Tensor {
 		return t
 	}
 	raw, err := libtorch.PowScalar(t.raw, exponent)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -646,6 +701,7 @@ func (t *Tensor) Clamp(minVal, maxVal float64) *Tensor {
 		return t
 	}
 	raw, err := libtorch.Clamp(t.raw, minVal, maxVal)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -672,6 +728,9 @@ func (t *Tensor) Conv2d(weight, bias *Tensor, stride, padding, dilation []int64,
 		biasRaw = bias.raw
 	}
 	raw, err := libtorch.Conv2d(t.raw, weight.raw, biasRaw, stride, padding, dilation, groups)
+	runtime.KeepAlive(t)
+	runtime.KeepAlive(weight)
+	runtime.KeepAlive(bias)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -685,6 +744,9 @@ func Conv2dBackward(gradOutput, input, weight *Tensor, stride, padding, dilation
 		gradOutput.raw, input.raw, weight.raw,
 		stride, padding, dilation, groups, computeBias,
 	)
+	runtime.KeepAlive(gradOutput)
+	runtime.KeepAlive(input)
+	runtime.KeepAlive(weight)
 	if err != nil {
 		e := errTensor(err)
 		return e, e, e
@@ -707,6 +769,7 @@ func (t *Tensor) Expand(shape []int64) *Tensor {
 		return t
 	}
 	raw, err := t.raw.Expand(shape)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -732,6 +795,9 @@ func (t *Tensor) ConvTranspose2d(weight, bias *Tensor, stride, padding, outputPa
 		biasRaw = bias.raw
 	}
 	raw, err := libtorch.ConvTranspose2d(t.raw, weight.raw, biasRaw, stride, padding, outputPadding, dilation, groups)
+	runtime.KeepAlive(t)
+	runtime.KeepAlive(weight)
+	runtime.KeepAlive(bias)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -744,6 +810,9 @@ func ConvTranspose2dBackward(gradOutput, input, weight *Tensor, stride, padding,
 		gradOutput.raw, input.raw, weight.raw,
 		stride, padding, outputPadding, dilation, groups, computeBias,
 	)
+	runtime.KeepAlive(gradOutput)
+	runtime.KeepAlive(input)
+	runtime.KeepAlive(weight)
 	if err != nil {
 		e := errTensor(err)
 		return e, e, e
@@ -765,6 +834,7 @@ func (t *Tensor) AdaptiveAvgPool2d(outputSize []int64) *Tensor {
 		return t
 	}
 	raw, err := libtorch.AdaptiveAvgPool2d(t.raw, outputSize)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -774,6 +844,8 @@ func (t *Tensor) AdaptiveAvgPool2d(outputSize []int64) *Tensor {
 // AdaptiveAvgPool2dBackward computes the gradient for adaptive avg pool.
 func AdaptiveAvgPool2dBackward(gradOutput, input *Tensor) *Tensor {
 	raw, err := libtorch.AdaptiveAvgPool2dBackward(gradOutput.raw, input.raw)
+	runtime.KeepAlive(gradOutput)
+	runtime.KeepAlive(input)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -795,6 +867,8 @@ func (t *Tensor) GridSample(grid *Tensor, mode, paddingMode int, alignCorners bo
 		return grid
 	}
 	raw, err := libtorch.GridSample(t.raw, grid.raw, mode, paddingMode, alignCorners)
+	runtime.KeepAlive(t)
+	runtime.KeepAlive(grid)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -808,6 +882,9 @@ func GridSampleBackward(gradOutput, input, grid *Tensor, mode, paddingMode int, 
 		gradOutput.raw, input.raw, grid.raw,
 		mode, paddingMode, alignCorners,
 	)
+	runtime.KeepAlive(gradOutput)
+	runtime.KeepAlive(input)
+	runtime.KeepAlive(grid)
 	if err != nil {
 		e := errTensor(err)
 		return e, e
@@ -857,6 +934,7 @@ func (t *Tensor) ToDType(dtype DType) *Tensor {
 		return t
 	}
 	raw, err := libtorch.ToDType(t.raw, dtype.toLibtorch())
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}
@@ -895,6 +973,7 @@ func (t *Tensor) AllFinite() bool {
 		return false
 	}
 	ok, err := libtorch.AllFinite(t.raw)
+	runtime.KeepAlive(t)
 	if err != nil {
 		return false
 	}
@@ -909,6 +988,7 @@ func (t *Tensor) ToDevice(device Device) *Tensor {
 		return t
 	}
 	raw, err := t.raw.ToDevice(device.toLibtorch())
+	runtime.KeepAlive(t)
 	if err != nil {
 		return errTensor(err)
 	}

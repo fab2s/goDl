@@ -43,9 +43,9 @@ type Variable struct {
 // returns, freeing C++ memory (including VRAM) deterministically
 // without waiting for Go's garbage collector.
 type gradFn struct {
-	name   string            // e.g. "AddBackward", for debugging
-	inputs []*Variable       // back-edges to input variables
-	saved  []*tensor.Tensor  // Retained during forward, Released after backward
+	name   string           // e.g. "AddBackward", for debugging
+	inputs []*Variable      // back-edges to input variables
+	saved  []*tensor.Tensor // Retained during forward, Released after backward
 	apply  func(gradOutput *tensor.Tensor) []*tensor.Tensor
 }
 
@@ -74,13 +74,17 @@ func NewVariable(data *tensor.Tensor, requiresGrad bool) *Variable {
 
 // newVar creates a non-leaf variable as the result of an operation.
 // If none of the inputs require gradients, tracking is skipped.
+// The variable is registered with the active Scope (if any) for
+// deterministic cleanup.
 func newVar(data *tensor.Tensor, fn *gradFn) *Variable {
-	return &Variable{
+	v := &Variable{
 		data:         data,
 		requiresGrad: fn != nil,
 		gradFn:       fn,
 		isLeaf:       false,
 	}
+	track(v)
+	return v
 }
 
 // errVariable creates a variable that carries an error.

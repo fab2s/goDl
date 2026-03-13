@@ -208,6 +208,49 @@ if d := model.Device(); d != nil {
 }
 ```
 
+### VRAM budget
+
+goDl automatically manages CUDA memory. The C++ shim tracks allocated
+CUDA bytes, and Go triggers GC proactively when usage exceeds 90% of
+physical VRAM — preventing modern NVIDIA drivers from silently spilling
+to system RAM.
+
+Three layers of defense work automatically:
+
+1. **Proactive GC** (90%): periodic check during tensor creation
+2. **Allocator cap** (95%): hard limit triggers GC callback
+3. **OOM callback**: last resort when VRAM is truly exhausted
+
+Override the budget with the `GODL_VRAM_BUDGET` environment variable:
+
+```bash
+GODL_VRAM_BUDGET=0.80 ./train  # 80% budget, more frequent GC
+```
+
+### Scope — deterministic tensor cleanup
+
+`autograd.Scope` frees all intermediate tensors from a training batch
+without calling `runtime.GC()`. This eliminates stop-the-world GC
+pauses that cause GPU pipeline stalls.
+
+```go
+for loader.Next() {
+    scope := autograd.NewScope()
+
+    // ... forward, backward, optimizer step ...
+
+    // Read any metrics BEFORE closing (tensors freed after this).
+    lossVal := loss.Item()
+
+    scope.Close() // frees ALL intermediate C++ tensors instantly
+}
+```
+
+Only autograd op results are tracked. Leaf parameters, user inputs
+(via `NewVariable`), and detached state are NOT tracked — their
+lifecycle is managed by the caller or the GC. The VRAM budget
+enforcement remains as a safety net for anything outside the scope.
+
 ## The Training Loop
 
 The standard pattern is: **forward -> loss -> zeroGrad -> backward -> clip -> step**.
@@ -434,6 +477,23 @@ for epoch := startEpoch; epoch < numEpochs; epoch++ {
 restores all state, and returns the saved epoch number. All named
 components must match between save and load — mismatched names or
 counts produce an error.
+
+Checkpoint loading is device-aware: parameters and optimizer state
+(momentum buffers, moment estimates) are automatically moved to the
+device they were on before the load. This means you can call
+`SetDevice` before loading, and the restored tensors end up on the
+correct device:
+
+```go
+model.SetDevice(tensor.CUDA)
+optimizer := nn.NewAdam(model.Parameters(), 0.001)
+
+ckpt := nn.NewCheckpoint("checkpoints/mymodel").
+    Model(model).
+    Add("optimizer", optimizer)
+
+startEpoch, err := ckpt.Load()  // params + optimizer state land on CUDA
+```
 
 ### What gets saved
 

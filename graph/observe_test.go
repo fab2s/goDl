@@ -10,6 +10,8 @@ import (
 )
 
 func TestTagged(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l1, _ := nn.NewLinear(2, 2)
 	setLinearWeights(l1, []float32{1, 0, 0, 1}, []float32{0, 0}) // identity
 	l2, _ := nn.NewLinear(2, 1)
@@ -19,8 +21,9 @@ func TestTagged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{3, 5}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{3, 5}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -52,6 +55,8 @@ func TestTagged(t *testing.T) {
 }
 
 func TestTaggedUpdatesOnForward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l, _ := nn.NewLinear(1, 1)
 	setLinearWeights(l, []float32{2}, []float32{0})
 
@@ -59,14 +64,15 @@ func TestTaggedUpdatesOnForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// First forward: 3 * 2 = 6.
-	x1, _ := tensor.FromFloat32([]float32{3}, []int64{1, 1})
+	x1, _ := tensor.FromFloat32([]float32{3}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x1, false))
 	v1 := scalarValue(g.Tagged("out"))
 
 	// Second forward: 5 * 2 = 10.
-	x2, _ := tensor.FromFloat32([]float32{5}, []int64{1, 1})
+	x2, _ := tensor.FromFloat32([]float32{5}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x2, false))
 	v2 := scalarValue(g.Tagged("out"))
 
@@ -79,6 +85,8 @@ func TestTaggedUpdatesOnForward(t *testing.T) {
 }
 
 func TestLog(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l, _ := nn.NewLinear(1, 1)
 	setLinearWeights(l, []float32{1}, []float32{0})
 
@@ -86,8 +94,9 @@ func TestLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{7}, []int64{1, 1})
+	x, _ := tensor.FromFloat32([]float32{7}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x, false))
 
 	// Hook should receive the correct value.
@@ -109,6 +118,8 @@ func TestLog(t *testing.T) {
 }
 
 func TestLogAllTags(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l1, _ := nn.NewLinear(2, 2)
 	setLinearWeights(l1, []float32{1, 0, 0, 1}, []float32{0, 0})
 	l2, _ := nn.NewLinear(2, 1)
@@ -118,8 +129,9 @@ func TestLogAllTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{3, 5}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{3, 5}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x, false))
 
 	var logged map[string]*autograd.Variable
@@ -140,6 +152,8 @@ func TestLogAllTags(t *testing.T) {
 }
 
 func TestCollectAndCollected(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l, _ := nn.NewLinear(1, 1)
 	setLinearWeights(l, []float32{1}, []float32{0}) // identity
 
@@ -147,10 +161,11 @@ func TestCollectAndCollected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	values := []float32{3, 7, 11}
 	for _, v := range values {
-		x, _ := tensor.FromFloat32([]float32{v}, []int64{1, 1})
+		x, _ := tensor.FromFloat32([]float32{v}, []int64{1, 1}, tensor.WithDevice(testDevice))
 		g.Forward(autograd.NewVariable(x, false))
 		g.Collect("out")
 	}
@@ -172,6 +187,8 @@ func TestCollectAndCollected(t *testing.T) {
 }
 
 func TestFlush(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l, _ := nn.NewLinear(1, 1)
 	setLinearWeights(l, []float32{1}, []float32{0})
 
@@ -179,6 +196,7 @@ func TestFlush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Simulate 2 epochs of 3 batches each.
 	epochs := [][]float32{
@@ -188,7 +206,7 @@ func TestFlush(t *testing.T) {
 
 	for _, epoch := range epochs {
 		for _, v := range epoch {
-			x, _ := tensor.FromFloat32([]float32{v}, []int64{1, 1})
+			x, _ := tensor.FromFloat32([]float32{v}, []int64{1, 1}, tensor.WithDevice(testDevice))
 			g.Forward(autograd.NewVariable(x, false))
 			g.Collect("out")
 		}
@@ -215,6 +233,8 @@ func TestFlush(t *testing.T) {
 }
 
 func TestFlushAll(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l1, _ := nn.NewLinear(2, 2)
 	setLinearWeights(l1, []float32{1, 0, 0, 1}, []float32{0, 0})
 	l2, _ := nn.NewLinear(2, 1)
@@ -224,8 +244,9 @@ func TestFlushAll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{3, 5}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{3, 5}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x, false))
 	g.Collect("hidden", "output")
 	g.Flush() // flush all
@@ -245,6 +266,8 @@ func TestFlushAll(t *testing.T) {
 }
 
 func TestFlushHook(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l, _ := nn.NewLinear(1, 1)
 	setLinearWeights(l, []float32{1}, []float32{0})
 
@@ -252,6 +275,7 @@ func TestFlushHook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	var flushed map[string]float64
 	g.OnFlush(func(f map[string]float64) {
@@ -260,7 +284,7 @@ func TestFlushHook(t *testing.T) {
 
 	// Collect values: 2, 4, 6 → mean = 4.
 	for _, v := range []float32{2, 4, 6} {
-		x, _ := tensor.FromFloat32([]float32{v}, []int64{1, 1})
+		x, _ := tensor.FromFloat32([]float32{v}, []int64{1, 1}, tensor.WithDevice(testDevice))
 		g.Forward(autograd.NewVariable(x, false))
 		g.Collect("out")
 	}
@@ -275,6 +299,8 @@ func TestFlushHook(t *testing.T) {
 }
 
 func TestTrendFromFlush(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l, _ := nn.NewLinear(1, 1)
 	setLinearWeights(l, []float32{1}, []float32{0})
 
@@ -282,11 +308,12 @@ func TestTrendFromFlush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Simulate 5 epochs with decreasing loss.
 	epochMeans := []float64{1.0, 0.8, 0.6, 0.4, 0.2}
 	for _, mean := range epochMeans {
-		x, _ := tensor.FromFloat32([]float32{float32(mean)}, []int64{1, 1})
+		x, _ := tensor.FromFloat32([]float32{float32(mean)}, []int64{1, 1}, tensor.WithDevice(testDevice))
 		g.Forward(autograd.NewVariable(x, false))
 		g.Collect("loss")
 		g.Flush("loss")
@@ -308,6 +335,8 @@ func TestTrendFromFlush(t *testing.T) {
 }
 
 func TestTrendStalledFromGraph(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l, _ := nn.NewLinear(1, 1)
 	setLinearWeights(l, []float32{1}, []float32{0})
 
@@ -315,10 +344,11 @@ func TestTrendStalledFromGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Simulate 5 epochs with flat loss.
 	for i := 0; i < 5; i++ {
-		x, _ := tensor.FromFloat32([]float32{0.5}, []int64{1, 1})
+		x, _ := tensor.FromFloat32([]float32{0.5}, []int64{1, 1}, tensor.WithDevice(testDevice))
 		g.Forward(autograd.NewVariable(x, false))
 		g.Collect("loss")
 		g.Flush("loss")
@@ -334,6 +364,8 @@ func TestTrendStalledFromGraph(t *testing.T) {
 }
 
 func TestResetTrend(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l, _ := nn.NewLinear(1, 1)
 	setLinearWeights(l, []float32{1}, []float32{0})
 
@@ -341,8 +373,9 @@ func TestResetTrend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1})
+	x, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x, false))
 	g.Collect("loss")
 	g.Flush("loss")
@@ -358,6 +391,8 @@ func TestResetTrend(t *testing.T) {
 }
 
 func TestResetTrendAll(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l1, _ := nn.NewLinear(2, 2)
 	setLinearWeights(l1, []float32{1, 0, 0, 1}, []float32{0, 0})
 	l2, _ := nn.NewLinear(2, 1)
@@ -367,8 +402,9 @@ func TestResetTrendAll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x, false))
 	g.Collect("a", "b")
 	g.Flush()
@@ -380,6 +416,8 @@ func TestResetTrendAll(t *testing.T) {
 }
 
 func TestSub(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Build an inner graph.
 	innerL, _ := nn.NewLinear(2, 2)
 	setLinearWeights(innerL, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -395,6 +433,7 @@ func TestSub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	outer.SetDevice(testDevice)
 
 	// Sub should return the inner graph.
 	sub := outer.Sub("sub")
@@ -406,7 +445,7 @@ func TestSub(t *testing.T) {
 	}
 
 	// Forward should populate both graphs' tagged outputs.
-	x, _ := tensor.FromFloat32([]float32{3, 5}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{3, 5}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := outer.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -429,6 +468,8 @@ func TestSub(t *testing.T) {
 }
 
 func TestSubCollect(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Inner graph: identity.
 	innerL, _ := nn.NewLinear(1, 1)
 	setLinearWeights(innerL, []float32{1}, []float32{0})
@@ -444,10 +485,11 @@ func TestSubCollect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	outer.SetDevice(testDevice)
 
 	// Simulate 3 batches.
 	for _, v := range []float32{3, 5, 7} {
-		x, _ := tensor.FromFloat32([]float32{v}, []int64{1, 1})
+		x, _ := tensor.FromFloat32([]float32{v}, []int64{1, 1}, tensor.WithDevice(testDevice))
 		outer.Forward(autograd.NewVariable(x, false))
 		outer.Collect("doubled")
 		outer.Sub("inner").Collect("val")
@@ -495,13 +537,16 @@ func TestSubNil(t *testing.T) {
 }
 
 func TestCollectUnknownTag(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l, _ := nn.NewLinear(1, 1)
 	g, err := From(l).Tag("out").Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1})
+	x, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x, false))
 
 	// Collecting an unknown tag should be a no-op (no panic).
@@ -567,6 +612,8 @@ func TestRecordVariadic(t *testing.T) {
 }
 
 func TestRecordAndCollectMix(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l, _ := nn.NewLinear(1, 1)
 	setLinearWeights(l, []float32{1}, []float32{0})
 
@@ -574,12 +621,13 @@ func TestRecordAndCollectMix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Mix Collect (from graph) and Record (external) in same epoch.
-	x, _ := tensor.FromFloat32([]float32{4}, []int64{1, 1})
+	x, _ := tensor.FromFloat32([]float32{4}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x, false))
-	g.Collect("out")       // graph value: 4
-	g.Record("out", 6)     // external value: 6
+	g.Collect("out")   // graph value: 4
+	g.Record("out", 6) // external value: 6
 
 	g.Flush()
 	trend := g.Trend("out")
@@ -601,9 +649,9 @@ func TestRecordFlushTrend(t *testing.T) {
 
 	// Simulate 3 epochs of purely external metrics.
 	epochs := [][]float64{
-		{1.0, 0.8, 0.6},   // mean = 0.8
-		{0.5, 0.4, 0.3},   // mean = 0.4
-		{0.2, 0.15, 0.1},  // mean = 0.15
+		{1.0, 0.8, 0.6},  // mean = 0.8
+		{0.5, 0.4, 0.3},  // mean = 0.4
+		{0.2, 0.15, 0.1}, // mean = 0.15
 	}
 
 	for _, epoch := range epochs {
@@ -646,6 +694,8 @@ func TestFlushEmpty(t *testing.T) {
 }
 
 func TestEndToEndTrainingPattern(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Full training pattern: 3 epochs, each with 4 batches of decreasing loss.
 	l, _ := nn.NewLinear(1, 1)
 	setLinearWeights(l, []float32{1}, []float32{0})
@@ -654,6 +704,7 @@ func TestEndToEndTrainingPattern(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Simulated epoch means: 0.8, 0.4, 0.2
 	batchValues := [][]float32{
@@ -664,7 +715,7 @@ func TestEndToEndTrainingPattern(t *testing.T) {
 
 	for _, epoch := range batchValues {
 		for _, v := range epoch {
-			x, _ := tensor.FromFloat32([]float32{v}, []int64{1, 1})
+			x, _ := tensor.FromFloat32([]float32{v}, []int64{1, 1}, tensor.WithDevice(testDevice))
 			g.Forward(autograd.NewVariable(x, false))
 			g.Collect("loss")
 		}
@@ -716,18 +767,21 @@ func TestFlushCount(t *testing.T) {
 }
 
 func TestElapsed(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l, _ := nn.NewLinear(1, 1)
 	g, err := From(l).Tag("out").Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	if g.Elapsed() != 0 {
 		t.Error("elapsed should be 0 before any forward")
 	}
 
 	// Forward sets trainingStart.
-	x, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1})
+	x, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x, false))
 
 	// Elapsed should be positive after forward.
@@ -766,11 +820,14 @@ func TestLastFlushDuration(t *testing.T) {
 }
 
 func TestETA(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l, _ := nn.NewLinear(1, 1)
 	g, err := From(l).Tag("out").Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// No flushes → 0.
 	if g.ETA(100) != 0 {
@@ -778,7 +835,7 @@ func TestETA(t *testing.T) {
 	}
 
 	// Run a forward so trainingStart is set before the first epoch.
-	x, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1})
+	x, _ := tensor.FromFloat32([]float32{1}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x, false))
 
 	g.Record("loss", 1.0)

@@ -8,7 +8,8 @@ import (
 )
 
 func TestCastParametersToFloat16(t *testing.T) {
-	data, err := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	data, err := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3}, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +31,8 @@ func TestCastParametersToFloat16(t *testing.T) {
 }
 
 func TestCastParametersToBFloat16(t *testing.T) {
-	data, err := tensor.FromFloat32([]float32{4.0, 5.0}, []int64{2})
+	skipIfDeviceUnavailable(t)
+	data, err := tensor.FromFloat32([]float32{4.0, 5.0}, []int64{2}, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +53,8 @@ func TestCastParametersToBFloat16(t *testing.T) {
 }
 
 func TestCastParametersRoundTrip(t *testing.T) {
-	data, err := tensor.FromFloat32([]float32{1.5, -2.5}, []int64{2})
+	skipIfDeviceUnavailable(t)
+	data, err := tensor.FromFloat32([]float32{1.5, -2.5}, []int64{2}, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,18 +76,19 @@ func TestCastParametersRoundTrip(t *testing.T) {
 }
 
 func TestGradScalerFiniteGrads(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	scaler := nn.NewGradScaler()
 	if scaler.ScaleFactor() != 65536.0 {
 		t.Fatalf("initial scale = %f, want 65536", scaler.ScaleFactor())
 	}
 
 	// Create a simple optimizer.
-	data, _ := tensor.FromFloat32([]float32{1.0}, []int64{1})
+	data, _ := tensor.FromFloat32([]float32{1.0}, []int64{1}, tensor.WithDevice(testDevice))
 	p := nn.NewParameter(data, "w")
 	opt := nn.NewAdam([]*nn.Parameter{p}, 0.001)
 
 	// Simulate a gradient.
-	grad, _ := tensor.FromFloat32([]float32{0.5}, []int64{1})
+	grad, _ := tensor.FromFloat32([]float32{0.5}, []int64{1}, tensor.WithDevice(testDevice))
 	p.SetGrad(grad.MulScalar(scaler.ScaleFactor())) // pre-scaled gradient
 
 	stepped := scaler.Step(opt)
@@ -100,17 +104,18 @@ func TestGradScalerFiniteGrads(t *testing.T) {
 }
 
 func TestGradScalerInfGrads(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	scaler := nn.NewGradScaler()
 	initialScale := scaler.ScaleFactor()
 
-	data, _ := tensor.FromFloat32([]float32{1.0}, []int64{1})
+	data, _ := tensor.FromFloat32([]float32{1.0}, []int64{1}, tensor.WithDevice(testDevice))
 	p := nn.NewParameter(data, "w")
 	opt := nn.NewAdam([]*nn.Parameter{p}, 0.001)
 
 	// Set an infinite gradient.
-	inf, _ := tensor.FromFloat32([]float32{1.0}, []int64{1})
+	inf, _ := tensor.FromFloat32([]float32{1.0}, []int64{1}, tensor.WithDevice(testDevice))
 	// Create inf by dividing by zero: 1/0 = inf
-	zero, _ := tensor.FromFloat32([]float32{0.0}, []int64{1})
+	zero, _ := tensor.FromFloat32([]float32{0.0}, []int64{1}, tensor.WithDevice(testDevice))
 	infGrad := inf.Div(zero)
 	p.SetGrad(infGrad)
 
@@ -127,7 +132,8 @@ func TestGradScalerInfGrads(t *testing.T) {
 }
 
 func TestTensorHalfFloat(t *testing.T) {
-	x, err := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	x, err := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3}, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,14 +158,15 @@ func TestTensorHalfFloat(t *testing.T) {
 }
 
 func TestTensorAllFinite(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3}, tensor.WithDevice(testDevice))
 	if !x.AllFinite() {
 		t.Error("expected all finite")
 	}
 
 	// Create inf.
-	one, _ := tensor.FromFloat32([]float32{1.0}, []int64{1})
-	zero, _ := tensor.FromFloat32([]float32{0.0}, []int64{1})
+	one, _ := tensor.FromFloat32([]float32{1.0}, []int64{1}, tensor.WithDevice(testDevice))
+	zero, _ := tensor.FromFloat32([]float32{0.0}, []int64{1}, tensor.WithDevice(testDevice))
 	inf := one.Div(zero)
 	if inf.AllFinite() {
 		t.Error("expected not all finite (has inf)")
@@ -167,7 +174,8 @@ func TestTensorAllFinite(t *testing.T) {
 }
 
 func TestTensorToDType(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0}, []int64{2})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0}, []int64{2}, tensor.WithDevice(testDevice))
 
 	// No-op when already the right dtype.
 	same := x.ToDType(tensor.Float32)
@@ -191,8 +199,9 @@ func TestTensorToDType(t *testing.T) {
 }
 
 func TestFloat32DataFromFloat16(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Create float32, cast to float16, then read as float32.
-	x, _ := tensor.FromFloat32([]float32{1.5, -2.0, 3.0}, []int64{3})
+	x, _ := tensor.FromFloat32([]float32{1.5, -2.0, 3.0}, []int64{3}, tensor.WithDevice(testDevice))
 	h := x.Half()
 	if h.DType() != tensor.Float16 {
 		t.Fatalf("dtype = %s, want float16", h.DType())

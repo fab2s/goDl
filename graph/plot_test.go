@@ -12,7 +12,7 @@ import (
 )
 
 func makePlotInput() *autograd.Variable {
-	t, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4})
+	t, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4}, tensor.WithDevice(testDevice))
 	return autograd.NewVariable(t, false)
 }
 
@@ -20,12 +20,14 @@ func makePlotInput() *autograd.Variable {
 
 // TestDOTWithProfileContainsTimings verifies timing annotations appear.
 func TestDOTWithProfileContainsTimings(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 4)).Tag("encoder").
 		Through(nn.MustLinear(4, 2)).Tag("decoder").
 		Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	g.Forward(makePlotInput())
@@ -48,6 +50,7 @@ func TestDOTWithProfileContainsTimings(t *testing.T) {
 
 // TestDOTWithProfileNoProfile falls back to structural DOT.
 func TestDOTWithProfileNoProfile(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 2)).Build()
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +67,7 @@ func TestDOTWithProfileNoProfile(t *testing.T) {
 
 // TestDOTWithProfileHeatColors verifies color annotations are hex.
 func TestDOTWithProfileHeatColors(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 4)).
 		Split(nn.MustLinear(4, 4), nn.MustLinear(4, 4), nn.MustLinear(4, 4)).
 		Merge(Mean()).
@@ -72,6 +76,7 @@ func TestDOTWithProfileHeatColors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	g.Forward(makePlotInput())
@@ -86,6 +91,7 @@ func TestDOTWithProfileHeatColors(t *testing.T) {
 
 // TestDOTWithProfileParallelLevel verifies parallelism annotation.
 func TestDOTWithProfileParallelLevel(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 4)).
 		Split(nn.MustLinear(4, 4), nn.MustLinear(4, 4)).
 		Merge(Mean()).
@@ -93,6 +99,7 @@ func TestDOTWithProfileParallelLevel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	g.Forward(makePlotInput())
@@ -106,10 +113,12 @@ func TestDOTWithProfileParallelLevel(t *testing.T) {
 
 // TestSVGWithProfile verifies SVG rendering with profile.
 func TestSVGWithProfile(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 2)).Tag("out").Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	g.Forward(makePlotInput())
@@ -162,10 +171,12 @@ func TestHeatColor(t *testing.T) {
 
 // TestPlotHTMLBasic verifies HTML generation with epoch data.
 func TestPlotHTMLBasic(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 1)).Tag("loss").Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Simulate 5 epochs.
 	for range 5 {
@@ -198,6 +209,7 @@ func TestPlotHTMLBasic(t *testing.T) {
 
 // TestPlotHTMLNoData verifies error when no epoch data exists.
 func TestPlotHTMLNoData(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 2)).Build()
 	if err != nil {
 		t.Fatal(err)
@@ -211,12 +223,14 @@ func TestPlotHTMLNoData(t *testing.T) {
 
 // TestPlotHTMLAllTags verifies plotting all tags when none specified.
 func TestPlotHTMLAllTags(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 4)).Tag("a").
 		Through(nn.MustLinear(4, 1)).Tag("b").
 		Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	for range 3 {
 		g.Forward(makePlotInput())
@@ -238,6 +252,7 @@ func TestPlotHTMLAllTags(t *testing.T) {
 
 // TestPlotHTMLGroupExpansion verifies TagGroup expansion in PlotHTML.
 func TestPlotHTMLGroupExpansion(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 4)).
 		Split(nn.MustLinear(4, 1), nn.MustLinear(4, 1)).TagGroup("head").
 		Merge(Mean()).
@@ -245,6 +260,7 @@ func TestPlotHTMLGroupExpansion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	for range 3 {
 		g.Forward(makePlotInput())
@@ -266,10 +282,12 @@ func TestPlotHTMLGroupExpansion(t *testing.T) {
 
 // TestPlotTimingsHTML verifies timing curves HTML generation.
 func TestPlotTimingsHTML(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 2)).Tag("layer").Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	for range 3 {
@@ -294,12 +312,14 @@ func TestPlotTimingsHTML(t *testing.T) {
 
 // TestExportTrendsCSV verifies CSV output format.
 func TestExportTrendsCSV(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 4)).Tag("a").
 		Through(nn.MustLinear(4, 1)).Tag("b").
 		Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	for range 3 {
 		g.Forward(makePlotInput())
@@ -337,6 +357,7 @@ func TestExportTrendsCSV(t *testing.T) {
 
 // TestExportTrendsNoData verifies error when no data exists.
 func TestExportTrendsNoData(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 2)).Build()
 	if err != nil {
 		t.Fatal(err)
@@ -350,10 +371,12 @@ func TestExportTrendsNoData(t *testing.T) {
 
 // TestExportTimingTrends verifies timing CSV export.
 func TestExportTimingTrends(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 2)).Tag("x").Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	for range 3 {
@@ -378,6 +401,7 @@ func TestExportTimingTrends(t *testing.T) {
 
 // TestWriteLogBasic verifies training log text output.
 func TestWriteLogBasic(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	l, _ := nn.NewLinear(1, 1)
 	g, err := From(l).Tag("out").Build()
 	if err != nil {
@@ -426,6 +450,7 @@ func TestWriteLogBasic(t *testing.T) {
 
 // TestWriteLogAllTags verifies auto-discovery of tags.
 func TestWriteLogAllTags(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	l, _ := nn.NewLinear(1, 1)
 	g, err := From(l).Tag("out").Build()
 	if err != nil {
@@ -450,6 +475,7 @@ func TestWriteLogAllTags(t *testing.T) {
 
 // TestWriteLogNoData verifies error when no data exists.
 func TestWriteLogNoData(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	l, _ := nn.NewLinear(1, 1)
 	g, err := From(l).Tag("out").Build()
 	if err != nil {

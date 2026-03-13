@@ -147,6 +147,7 @@ func TestTrendGroupEmpty(t *testing.T) {
 
 // TestTrendsExpandsGroup verifies g.Trends expands tag groups.
 func TestTrendsExpandsGroup(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 4)).
 		Split(nn.MustLinear(4, 1), nn.MustLinear(4, 1)).TagGroup("head").
 		Merge(Mean()).
@@ -154,6 +155,7 @@ func TestTrendsExpandsGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Collect data for 5 epochs with decreasing values.
 	for epoch := 0; epoch < 5; epoch++ {
@@ -198,6 +200,7 @@ func TestTrendsMixedGroupAndTag(t *testing.T) {
 
 // TestTimingTrendsExpandsGroup verifies g.TimingTrends expands tag groups.
 func TestTimingTrendsExpandsGroup(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	g, err := From(nn.MustLinear(4, 4)).
 		Split(nn.MustLinear(4, 4), nn.MustLinear(4, 4)).TagGroup("head").
 		Merge(Mean()).
@@ -205,6 +208,7 @@ func TestTimingTrendsExpandsGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	g.EnableProfiling()
 	for epoch := 0; epoch < 3; epoch++ {

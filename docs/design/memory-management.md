@@ -282,26 +282,161 @@ Go's GC finalizers run on a separate goroutine/thread, so they cannot
 call `Free()` directly (the mutex is held by a different thread).
 
 Solution: a pending-free queue. When `gcCallbackActive > 0`, the
-`Free()` method queues handles instead of freeing directly. The
-callback thread drains the queue — recursive mutex allows re-entry
-from the same thread.
+`Free()` method queues handles instead of freeing directly.
 
 ```
 goTriggerGC() [on allocator thread, mutex held]:
   1. gcCallbackActive++
   2. runtime.GC()  →  finalizers queue handles to pendingFreeHandles
   3. sleep(1ms)    →  let finalizer goroutine process
-  4. drain queue   →  Free() on this thread, re-enters recursive mutex
-  5. repeat once   →  second GC pass for finalizer-freed objects
-  6. gcCallbackActive--
+  4. gcCallbackActive--
 ```
 
+Critically, we do **not** drain the pending-free queue inside the
+callback. The queued handles are drained lazily by the next
+`Tensor.Free()` call outside the callback context:
+
+```go
+func (t *Tensor) Free() {
+    if t.handle != nil {
+        h := t.handle
+        t.handle = nil
+        if gcCallbackActive.Load() > 0 {
+            queueFreeHandle(unsafe.Pointer(h))
+        } else {
+            drainPendingFrees()  // free any queued handles first
+            C.godl_free_tensor(h)
+        }
+    }
+}
+```
+
+This happens naturally during explicit `Release()` calls in the
+backward pass or GC finalization between training steps.
+
+**`runtime.KeepAlive` on CGo call sites (`tensor/ops.go`, `tensor/tensor.go`):**
+
+Go's tracing GC can collect a `*tensor.Tensor` wrapper as soon as no
+live Go code references it — even while a CGo call using its C++
+handle is still running. If the GC callback fires during that CGo
+call, the finalizer queues the handle for freeing, and a subsequent
+drain frees it out from under the active C++ operation.
+
+The standard Go solution (used by `os.File`, `net.Conn`, etc.) is
+`runtime.KeepAlive(t)` after each CGo call. This inserts a reference
+that the compiler cannot optimize away, guaranteeing the wrapper
+survives until the CGo call returns:
+
+```go
+raw, err := libtorch.Matmul(t.raw, other.raw)
+runtime.KeepAlive(t)
+runtime.KeepAlive(other)
+```
+
+Applied to all ~50 CGo call sites in `tensor/ops.go` (arithmetic,
+activations, reductions, convolutions, device transfer) and
+`tensor/tensor.go` (Shape, DType, Device, data access methods).
+
+**Why draining during the callback caused use-after-free:**
+
+The original implementation drained the pending-free queue inside
+`goTriggerGC()`. This was a use-after-free because the callback runs
+on the **same thread and call stack** as the CGo operation that
+triggered the allocation:
+
+```
+Go code: t.Matmul(other)
+  → CGo call: godl_matmul(t.handle, other.handle)
+    → C++: at::matmul needs temp memory
+      → CUDA allocator: no free blocks → FreeMemoryCallback
+        → goTriggerGC():
+            runtime.GC() → finalizer marks `other` as dead (no more
+                            Go references after the CGo boundary)
+            drainPendingFrees() → frees other.handle
+        ← returns to allocator
+      ← allocator retries allocation
+    ← at::matmul continues... using freed other.handle → SIGSEGV
+```
+
+Symptoms varied: corrupted vtable, "tensor does not have a device",
+TLS assertion failures. Only triggered under VRAM pressure with large
+tensors. The combination of `runtime.KeepAlive` (prevents premature
+GC) and lazy draining (prevents same-stack freeing) eliminates this
+class of bug entirely.
+
+**Proactive VRAM-aware GC (`vram_budget.go`):**
+
+Go's GC has zero visibility into C++ memory. A `*Tensor` wrapper is
+~50 bytes on the Go heap but can hide megabytes of VRAM. When
+unreachable wrappers ("zombies") accumulate, Go sees a nearly empty
+heap and doesn't run GC. On modern NVIDIA drivers with unified/managed
+memory, the driver silently satisfies allocations by spilling VRAM to
+system RAM — system RAM grows unboundedly.
+
+The proactive GC bridges this gap via two components:
+
+**C++ allocation tracking** (`shim.cpp`): An atomic counter tracks
+total bytes held by CUDA tensors, piggybacked on existing `wrap()` and
+`godl_free_tensor()` calls. Only CUDA tensors are counted — CPU
+tensors don't contribute to VRAM pressure. Zero extra CGo roundtrips.
+
+```cpp
+static std::atomic<int64_t> godl_cuda_alloc_bytes{0};
+
+static TorchTensor wrap(torch::Tensor t) {
+    auto* p = new torch::Tensor(std::move(t));
+    if (p->is_cuda()) {
+        godl_cuda_alloc_bytes += p->nbytes();  // ~1ns atomic add
+    }
+    return (TorchTensor)p;
+}
+```
+
+**Go-side periodic check** (`vram_budget.go`): On init, the VRAM
+budget is set to 90% of physical VRAM (via `cudaMemGetInfo`). Every
+100 tensor creations, `EnforceVRAMBudget()` reads the C++ counter and
+triggers `runtime.GC()` if over budget:
+
+```go
+func EnforceVRAMBudget() {
+    if vramBudget <= 0 { return }               // CPU-only: no-op
+    if wrapCount.Add(1)%100 != 0 { return }     // ~1ns atomic
+    if CUDAAllocatedBytes() > vramBudget {       // one CGo call
+        runtime.GC()                             // ~2ms, rare
+    }
+}
+```
+
+Cost: one atomic increment per `wrap()` (~1ns). One CGo call every 100
+wraps (~100ns amortized to ~1ns). `runtime.GC()` only when over budget
+(~2ms, rare after warmup as the working set stabilizes). CPU-only
+builds pay nothing — the `vramBudget <= 0` check exits immediately.
+
+Override via `GODL_VRAM_BUDGET` environment variable (e.g. `"0.90"`).
+
+**Hard allocator cap** (`SetMemoryFraction`): Safety net behind the
+proactive GC. `setMemoryFraction(0.95)` caps the allocator — above
+this, allocations fail and trigger the GC callback. This catches cases
+where the proactive GC didn't free enough (the working set genuinely
+needs >90% VRAM).
+
+**Three layers of defense:**
+
+| Layer | Trigger | Mechanism | Cost |
+|-------|---------|-----------|------|
+| Proactive GC | 90% tracked CUDA bytes | atomic counter + `runtime.GC()` | ~1ns/wrap, ~2ms when triggered |
+| Allocator cap | 95% VRAM | `setMemoryFraction` → allocator fails → GC callback | zero until triggered |
+| OOM callback | true CUDA OOM | `FreeMemoryCallback` → `goTriggerGC` | zero until triggered |
+
 **What this achieves:**
-- Zero cost in happy path — callback only fires when VRAM is tight
-- Forward intermediates freed on demand, not at GC's discretion
+- Zero cost in happy path — proactive GC rarely fires after warmup
+- Forward intermediates freed proactively, not at GC's discretion
 - No `runtime.GC()` calls in user code or engine
 - Pending-free queue prevents deadlock with allocator's mutex
-- If GC doesn't free enough, normal OOM error propagates
+- KeepAlive prevents premature GC of tensor wrappers during CGo calls
+- Lazy drain prevents use-after-free on the allocator's call stack
+- Three-layer defense prevents silent spill to system RAM
+- If all layers fail, normal OOM error propagates
 
 ---
 
@@ -311,6 +446,19 @@ goTriggerGC() [on allocator thread, mutex held]:
 Every `retain()`/`release()` is a CGo call (~100ns). With 36 ops and
 multiple saved tensors each, this adds measurable overhead to every
 forward+backward pass. Go-side atomic ops are ~1-2ns — 50-100x cheaper.
+
+**Drain pending frees inside the GC callback:**
+The callback runs on the same thread/call-stack as the CGo operation
+that triggered the allocation. Draining there frees handles that C++
+code higher in the stack is still using. Always drain lazily from the
+next `Free()` call outside the callback.
+
+**Omit `runtime.KeepAlive` after CGo calls:**
+Without KeepAlive, Go's GC can collect a `*tensor.Tensor` wrapper
+while its C++ handle is passed to a CGo function. If the GC callback
+fires during that call, the finalizer queues the handle, and the next
+drain frees it. This is a use-after-free that only manifests under
+VRAM pressure — extremely hard to reproduce and debug.
 
 **Add `runtime.GC()` calls throughout the engine:**
 This papers over the problem. The goal is deterministic lifecycle, not
@@ -329,7 +477,72 @@ this responsibility to users is a design failure.
 | Phase 1: nil backward graph | Done | ~10 in engine.go | Halves post-backward GC pressure |
 | Phase 2: refcounting | Done | ~30 in tensor.go | Enables deterministic free |
 | Phase 3: saved tensor tracking | Done | ~35 gradFn changes across ops.go + engine.go | Deterministic VRAM release during backward |
-| Phase 4: CUDA OOM → GC callback | Done | ~15 in shim.cpp + ~80 in gc_callback.go | On-demand GC when VRAM is tight |
+| Phase 4: VRAM-aware GC | Done | ~20 in shim.cpp + ~80 in gc_callback.go + ~90 in vram_budget.go + ~50 KeepAlive in tensor/ | Proactive GC at 90% VRAM, hard cap at 95%, OOM callback as last resort |
+| Phase 5: autograd.Scope | Done | ~65 in scope.go + ~5 in variable.go | Deterministic batch-level cleanup, no GC needed |
+
+---
+
+### Phase 5: autograd.Scope — deterministic batch-level cleanup
+
+**Status: implemented**
+
+Phases 1-4 make backward deterministic and add VRAM safety nets, but
+forward intermediate result tensors (Variable.data for non-leaf nodes)
+still rely on `runtime.GC()` for cleanup. On GPUs, GC pauses cause
+pipeline stalls — `runtime.GC()` is stop-the-world, scans the entire
+heap, and blocks GPU work submission.
+
+`autograd.Scope` eliminates this by tracking intermediate Variables
+and freeing their C++ tensors at batch boundaries:
+
+```go
+for loader.Next() {
+    scope := autograd.NewScope()
+    // ... forward, backward, step, read metrics ...
+    scope.Close() // frees all intermediate tensors instantly
+}
+```
+
+**What gets tracked:** Only Variables created by autograd ops (via the
+internal `newVar()` helper). Every op in `ops.go` flows through
+`newVar()`, which calls `track(v)` to register the Variable with the
+active scope.
+
+**What does NOT get tracked:**
+- Leaf parameters (created via `NewVariable` in module constructors)
+- User inputs (created via `NewVariable` in training loops)
+- Detached state (created via `NewVariable` in `DetachState`)
+- Error variables (no valid tensor to release)
+
+This distinction is critical. `NewVariable` wraps external tensors
+whose lifecycle is managed by the caller. Op results are fresh tensors
+created by the autograd system — the scope can safely own them.
+
+**Why not track NewVariable too?**
+
+Three interacting problems:
+1. Phase 1 nils `gradFn` on all non-leaf nodes during backward. After
+   backward, intermediates have `requiresGrad=true, gradFn=nil` —
+   identical to leaf parameters. Any skip condition based on these
+   fields would either skip everything or nothing.
+2. `DetachState` creates new Variables via `NewVariable` that share
+   the same `*tensor.Tensor` as the original intermediate. If both
+   are tracked, Close() releases the shared tensor, breaking the
+   next batch.
+3. User inputs (`NewVariable(batch.Image, false)`) wrap tensors the
+   scope doesn't own. Releasing them invalidates the caller's data.
+
+Tracking only op results via `newVar()` sidesteps all three problems.
+
+**Thread safety:** The scope uses a mutex for the tracked list.
+Parallel graph execution (goroutines in independent branches) can
+call `track()` concurrently. The mutex is uncontended in the common
+(sequential) case.
+
+**Cost:** One atomic pointer load per `newVar()` (~1ns) when no scope
+is active. One mutex lock+append when active (~10ns uncontended).
+`Close()` walks the list calling `Release()` + nil — microseconds for
+a typical batch of ~500-1000 intermediates.
 
 ---
 
@@ -344,6 +557,8 @@ tensors, releasing them as backward progresses.
 goDl uses Go's tracing GC, which is fundamentally non-deterministic
 for C memory. Phase 1 (nil-out) + Phase 2+3 (Go-side refcounting +
 deterministic release) brings goDl to near-parity with PyTorch for
-saved-for-backward tensors. Phase 4 (CUDA OOM → GC callback) closes
-the remaining gap for forward intermediates — the allocator asks Go
-for GC exactly when VRAM is tight, with zero cost in the happy path.
+saved-for-backward tensors. Phase 4 (VRAM-aware GC) adds safety nets
+for forward intermediates. Phase 5 (autograd.Scope) closes the
+remaining gap — forward intermediates are freed deterministically at
+batch boundaries, matching PyTorch's scope-exit behavior without
+relying on reference counting.

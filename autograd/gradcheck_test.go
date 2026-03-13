@@ -56,7 +56,7 @@ func gradCheck(t *testing.T, name string, f func([]*autograd.Variable) *autograd
 			pertPlus := make([]float32, numel)
 			copy(pertPlus, origData)
 			pertPlus[ei] += float32(epsilon)
-			tPlus, _ := tensor.FromFloat32(pertPlus, shape)
+			tPlus, _ := tensor.FromFloat32(pertPlus, shape, tensor.WithDevice(testDevice))
 
 			varsPlus := makeVarsExcept(inputs, vi, tPlus)
 			fPlus := scalarVal(t, name, f(varsPlus))
@@ -65,7 +65,7 @@ func gradCheck(t *testing.T, name string, f func([]*autograd.Variable) *autograd
 			pertMinus := make([]float32, numel)
 			copy(pertMinus, origData)
 			pertMinus[ei] -= float32(epsilon)
-			tMinus, _ := tensor.FromFloat32(pertMinus, shape)
+			tMinus, _ := tensor.FromFloat32(pertMinus, shape, tensor.WithDevice(testDevice))
 
 			varsMinus := makeVarsExcept(inputs, vi, tMinus)
 			fMinus := scalarVal(t, name, f(varsMinus))
@@ -113,86 +113,96 @@ func scalarVal(t *testing.T, name string, v *autograd.Variable) float64 {
 // --- Numerical gradient checks for all ops ---
 
 func TestGradCheckExp(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{0.5, 1.0, -0.3, 2.0}, []int64{2, 2})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{0.5, 1.0, -0.3, 2.0}, []int64{2, 2}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Exp", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Exp().Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
 func TestGradCheckLog(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{0.5, 1.0, 2.0, 3.0}, []int64{2, 2})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{0.5, 1.0, 2.0, 3.0}, []int64{2, 2}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Log", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Log().Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
 func TestGradCheckSqrt(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 4.0, 9.0, 16.0}, []int64{2, 2})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 4.0, 9.0, 16.0}, []int64{2, 2}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Sqrt", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Sqrt().Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
 func TestGradCheckNeg(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, -2.0, 3.0, -4.0}, []int64{4})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, -2.0, 3.0, -4.0}, []int64{4}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Neg", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Neg().Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
 func TestGradCheckAddScalar(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "AddScalar", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].AddScalar(5.0).Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
 func TestGradCheckMulScalar(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "MulScalar", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].MulScalar(2.5).Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
 func TestGradCheckDiv(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0}, []int64{2, 2})
-	y, _ := tensor.FromFloat32([]float32{2.0, 3.0, 4.0, 5.0}, []int64{2, 2})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0}, []int64{2, 2}, tensor.WithDevice(testDevice))
+	y, _ := tensor.FromFloat32([]float32{2.0, 3.0, 4.0, 5.0}, []int64{2, 2}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Div", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Div(v[1]).Sum()
 	}, []*tensor.Tensor{x, y}, 1e-2)
 }
 
 func TestGradCheckSumDim(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "SumDim_dim0", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].SumDim(0, false).Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 
-	x2, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3})
+	x2, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "SumDim_dim1", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].SumDim(1, false).Sum()
 	}, []*tensor.Tensor{x2}, 1e-2)
 
-	x3, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3})
+	x3, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "SumDim_keepdim", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].SumDim(1, true).Sum()
 	}, []*tensor.Tensor{x3}, 1e-2)
 }
 
 func TestGradCheckMeanDim(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "MeanDim_dim1", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].MeanDim(1, false).Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 
-	x2, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3})
+	x2, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "MeanDim_keepdim", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].MeanDim(1, true).Sum()
 	}, []*tensor.Tensor{x2}, 1e-2)
 }
 
 func TestGradCheckTranspose(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Transpose", func(v []*autograd.Variable) *autograd.Variable {
 		// Transpose then scale to make gradient non-trivial.
 		return v[0].Transpose(0, 1).MulScalar(2.0).Sum()
@@ -200,125 +210,139 @@ func TestGradCheckTranspose(t *testing.T) {
 }
 
 func TestGradCheckReshape(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Reshape", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Reshape([]int64{3, 2}).MulScalar(3.0).Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
 func TestGradCheckSoftmax(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 0.5, 1.5, 2.5}, []int64{2, 3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 0.5, 1.5, 2.5}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Softmax", func(v []*autograd.Variable) *autograd.Variable {
 		// Use softmax then sum weighted by position to get non-trivial gradient.
 		sm := v[0].Softmax(1)
-		weights, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 1.0, 2.0, 3.0}, []int64{2, 3})
+		weights, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 1.0, 2.0, 3.0}, []int64{2, 3}, tensor.WithDevice(testDevice))
 		w := autograd.NewVariable(weights, false)
 		return sm.Mul(w).Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
 func TestGradCheckSelect(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Select_dim0", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Select(0, 1).Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 
-	x2, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3})
+	x2, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Select_dim1", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Select(1, 2).Sum()
 	}, []*tensor.Tensor{x2}, 1e-2)
 }
 
 func TestGradCheckNarrow(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Narrow", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Narrow(1, 1, 2).MulScalar(2.0).Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
 func TestGradCheckCat(t *testing.T) {
-	a, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{1, 3})
-	b, _ := tensor.FromFloat32([]float32{4.0, 5.0}, []int64{1, 2})
+	skipIfDeviceUnavailable(t)
+	a, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{1, 3}, tensor.WithDevice(testDevice))
+	b, _ := tensor.FromFloat32([]float32{4.0, 5.0}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Cat", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Cat(v[1], 1).MulScalar(2.0).Sum()
 	}, []*tensor.Tensor{a, b}, 1e-2)
 }
 
 func TestGradCheckIndexSelect(t *testing.T) {
-	w, _ := tensor.FromFloat32([]float32{10, 11, 20, 21, 30, 31, 40, 41}, []int64{4, 2})
-	idx, _ := tensor.FromInt64([]int64{1, 3, 1}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	w, _ := tensor.FromFloat32([]float32{10, 11, 20, 21, 30, 31, 40, 41}, []int64{4, 2}, tensor.WithDevice(testDevice))
+	idx, _ := tensor.FromInt64([]int64{1, 3, 1}, []int64{3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "IndexSelect", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].IndexSelect(0, idx).Sum()
 	}, []*tensor.Tensor{w}, 1e-2)
 }
 
 func TestGradCheckSigmoid(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{-1.0, 0.0, 0.5, 1.0}, []int64{4})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{-1.0, 0.0, 0.5, 1.0}, []int64{4}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Sigmoid", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Sigmoid().Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
 func TestGradCheckTanh(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{-1.0, 0.0, 0.5, 1.0}, []int64{4})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{-1.0, 0.0, 0.5, 1.0}, []int64{4}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Tanh", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Tanh().Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
 func TestGradCheckReLU(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Avoid 0 where gradient is discontinuous.
-	x, _ := tensor.FromFloat32([]float32{-2.0, -0.5, 0.5, 2.0}, []int64{4})
+	x, _ := tensor.FromFloat32([]float32{-2.0, -0.5, 0.5, 2.0}, []int64{4}, tensor.WithDevice(testDevice))
 	gradCheck(t, "ReLU", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].ReLU().Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
 func TestGradCheckAdd(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3})
-	y, _ := tensor.FromFloat32([]float32{4.0, 5.0, 6.0}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3}, tensor.WithDevice(testDevice))
+	y, _ := tensor.FromFloat32([]float32{4.0, 5.0, 6.0}, []int64{3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Add", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Add(v[1]).Sum()
 	}, []*tensor.Tensor{x, y}, 1e-2)
 }
 
 func TestGradCheckSub(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3})
-	y, _ := tensor.FromFloat32([]float32{4.0, 5.0, 6.0}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3}, tensor.WithDevice(testDevice))
+	y, _ := tensor.FromFloat32([]float32{4.0, 5.0, 6.0}, []int64{3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Sub", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Sub(v[1]).Sum()
 	}, []*tensor.Tensor{x, y}, 1e-2)
 }
 
 func TestGradCheckMul(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3})
-	y, _ := tensor.FromFloat32([]float32{4.0, 5.0, 6.0}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3}, tensor.WithDevice(testDevice))
+	y, _ := tensor.FromFloat32([]float32{4.0, 5.0, 6.0}, []int64{3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Mul", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Mul(v[1]).Sum()
 	}, []*tensor.Tensor{x, y}, 1e-2)
 }
 
 func TestGradCheckMatmul(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3})
-	w, _ := tensor.FromFloat32([]float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6}, []int64{3, 2})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, []int64{2, 3}, tensor.WithDevice(testDevice))
+	w, _ := tensor.FromFloat32([]float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6}, []int64{3, 2}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Matmul", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Matmul(v[1]).Sum()
 	}, []*tensor.Tensor{x, w}, 1e-2)
 }
 
 func TestGradCheckConv2d(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Input [1, 1, 4, 4], weight [1, 1, 3, 3], no bias.
 	input, _ := tensor.FromFloat32([]float32{
 		1, 2, 3, 4,
 		5, 6, 7, 8,
 		9, 10, 11, 12,
 		13, 14, 15, 16,
-	}, []int64{1, 1, 4, 4})
+	}, []int64{1, 1, 4, 4}, tensor.WithDevice(testDevice))
 	weight, _ := tensor.FromFloat32([]float32{
 		1, 0, -1,
 		1, 0, -1,
 		1, 0, -1,
-	}, []int64{1, 1, 3, 3})
+	}, []int64{1, 1, 3, 3}, tensor.WithDevice(testDevice))
 
 	gradCheck(t, "Conv2d", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Conv2d(v[1], nil,
@@ -327,18 +351,19 @@ func TestGradCheckConv2d(t *testing.T) {
 }
 
 func TestGradCheckConv2dWithBias(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	input, _ := tensor.FromFloat32([]float32{
 		1, 2, 3, 4,
 		5, 6, 7, 8,
 		9, 10, 11, 12,
 		13, 14, 15, 16,
-	}, []int64{1, 1, 4, 4})
+	}, []int64{1, 1, 4, 4}, tensor.WithDevice(testDevice))
 	weight, _ := tensor.FromFloat32([]float32{
 		1, 0, -1,
 		1, 0, -1,
 		1, 0, -1,
-	}, []int64{1, 1, 3, 3})
-	bias, _ := tensor.FromFloat32([]float32{0.5}, []int64{1})
+	}, []int64{1, 1, 3, 3}, tensor.WithDevice(testDevice))
+	bias, _ := tensor.FromFloat32([]float32{0.5}, []int64{1}, tensor.WithDevice(testDevice))
 
 	gradCheck(t, "Conv2dBias", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Conv2d(v[1], v[2],
@@ -347,29 +372,32 @@ func TestGradCheckConv2dWithBias(t *testing.T) {
 }
 
 func TestGradCheckBroadcastAdd(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
-	b, _ := tensor.FromFloat32([]float32{0.1, 0.2, 0.3}, []int64{1, 3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3}, tensor.WithDevice(testDevice))
+	b, _ := tensor.FromFloat32([]float32{0.1, 0.2, 0.3}, []int64{1, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "BroadcastAdd", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Add(v[1]).Sum()
 	}, []*tensor.Tensor{x, b}, 1e-2)
 }
 
 func TestGradCheckBroadcastMul(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
-	b, _ := tensor.FromFloat32([]float32{0.5, 1.0, 1.5}, []int64{1, 3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3}, tensor.WithDevice(testDevice))
+	b, _ := tensor.FromFloat32([]float32{0.5, 1.0, 1.5}, []int64{1, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "BroadcastMul", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Mul(v[1]).Sum()
 	}, []*tensor.Tensor{x, b}, 1e-2)
 }
 
 func TestGradCheckConvTranspose2d(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Input [1, 1, 2, 2], weight [1, 1, 3, 3] — upsample to 4x4.
-	input, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 1, 2, 2})
+	input, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 1, 2, 2}, tensor.WithDevice(testDevice))
 	weight, _ := tensor.FromFloat32([]float32{
 		1, 0, -1,
 		0, 1, 0,
 		-1, 0, 1,
-	}, []int64{1, 1, 3, 3})
+	}, []int64{1, 1, 3, 3}, tensor.WithDevice(testDevice))
 
 	gradCheck(t, "ConvTranspose2d", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].ConvTranspose2d(v[1], nil,
@@ -378,13 +406,14 @@ func TestGradCheckConvTranspose2d(t *testing.T) {
 }
 
 func TestGradCheckAdaptiveAvgPool2d(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Input [1, 1, 4, 4], pool to 2x2.
 	input, _ := tensor.FromFloat32([]float32{
 		1, 2, 3, 4,
 		5, 6, 7, 8,
 		9, 10, 11, 12,
 		13, 14, 15, 16,
-	}, []int64{1, 1, 4, 4})
+	}, []int64{1, 1, 4, 4}, tensor.WithDevice(testDevice))
 
 	gradCheck(t, "AdaptiveAvgPool2d", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].AdaptiveAvgPool2d([]int64{2, 2}).Sum()
@@ -392,6 +421,7 @@ func TestGradCheckAdaptiveAvgPool2d(t *testing.T) {
 }
 
 func TestGradCheckGridSample(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Input [1, 1, 4, 4], grid [1, 2, 2, 2] — sample a 2x2 output.
 	// Use grid values well inside [-1, 1] to stay in bilinear region.
 	input, _ := tensor.FromFloat32([]float32{
@@ -399,11 +429,11 @@ func TestGradCheckGridSample(t *testing.T) {
 		5, 6, 7, 8,
 		9, 10, 11, 12,
 		13, 14, 15, 16,
-	}, []int64{1, 1, 4, 4})
+	}, []int64{1, 1, 4, 4}, tensor.WithDevice(testDevice))
 	grid, _ := tensor.FromFloat32([]float32{
 		-0.5, -0.5, 0.5, -0.5,
 		-0.5, 0.5, 0.5, 0.5,
-	}, []int64{1, 2, 2, 2})
+	}, []int64{1, 2, 2, 2}, tensor.WithDevice(testDevice))
 
 	gradCheck(t, "GridSample", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].GridSample(v[1], 0, 0, true).Sum()
@@ -413,24 +443,27 @@ func TestGradCheckGridSample(t *testing.T) {
 // Composition tests: verify gradients through chained operations.
 
 func TestGradCheckComposedExpLog(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{0.5, 1.0, 2.0}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{0.5, 1.0, 2.0}, []int64{3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Exp(Log(x))", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Log().Exp().Sum()
 	}, []*tensor.Tensor{x}, 1e-2)
 }
 
 func TestGradCheckComposedLinearSigmoid(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{0.1, 0.2, 0.3}, []int64{1, 3})
-	w, _ := tensor.FromFloat32([]float32{0.5, -0.3, 0.1, 0.2, -0.1, 0.4}, []int64{3, 2})
-	b, _ := tensor.FromFloat32([]float32{0.1, -0.1}, []int64{1, 2})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{0.1, 0.2, 0.3}, []int64{1, 3}, tensor.WithDevice(testDevice))
+	w, _ := tensor.FromFloat32([]float32{0.5, -0.3, 0.1, 0.2, -0.1, 0.4}, []int64{3, 2}, tensor.WithDevice(testDevice))
+	b, _ := tensor.FromFloat32([]float32{0.1, -0.1}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Sigmoid(x@w+b)", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Matmul(v[1]).Add(v[2]).Sigmoid().Sum()
 	}, []*tensor.Tensor{x, w, b}, 1e-2)
 }
 
 func TestGradCheckComposedSoftmaxCE(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Softmax + weighted sum (simplified cross-entropy-like loss).
-	logits, _ := tensor.FromFloat32([]float32{2.0, 1.0, 0.1}, []int64{1, 3})
+	logits, _ := tensor.FromFloat32([]float32{2.0, 1.0, 0.1}, []int64{1, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Softmax_weighted", func(v []*autograd.Variable) *autograd.Variable {
 		sm := v[0].Softmax(1)
 		// Target: select class 0.
@@ -439,7 +472,8 @@ func TestGradCheckComposedSoftmaxCE(t *testing.T) {
 }
 
 func TestGradCheckChainedReshapeTranspose(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Transpose(Reshape(x))", func(v []*autograd.Variable) *autograd.Variable {
 		// Reshape [2,3] → [3,2], then transpose [3,2] → [2,3], then scale.
 		return v[0].Reshape([]int64{3, 2}).Transpose(0, 1).MulScalar(2.0).Sum()
@@ -447,7 +481,8 @@ func TestGradCheckChainedReshapeTranspose(t *testing.T) {
 }
 
 func TestGradCheckNarrowCatRoundtrip(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "NarrowCat", func(v []*autograd.Variable) *autograd.Variable {
 		left := v[0].Narrow(1, 0, 2)
 		right := v[0].Narrow(1, 2, 1)
@@ -457,58 +492,66 @@ func TestGradCheckNarrowCatRoundtrip(t *testing.T) {
 }
 
 func TestGradCheckAbs(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Avoid zero where gradient is undefined.
-	x, _ := tensor.FromFloat32([]float32{-2.0, 1.0, -0.5, 3.0}, []int64{4})
+	x, _ := tensor.FromFloat32([]float32{-2.0, 1.0, -0.5, 3.0}, []int64{4}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Abs", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Abs().Sum()
 	}, []*tensor.Tensor{x}, 1e-3)
 }
 
 func TestGradCheckPow(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 3.0}, []int64{3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Pow(2)", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Pow(2).Sum()
 	}, []*tensor.Tensor{x}, 1e-3)
 }
 
 func TestGradCheckPowFractional(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 4.0}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1.0, 2.0, 4.0}, []int64{3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Pow(0.5)", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Pow(0.5).Sum()
 	}, []*tensor.Tensor{x}, 1e-3)
 }
 
 func TestGradCheckClamp(t *testing.T) {
+	skipIfDeviceUnavailable(t)
 	// Values in range, at boundaries, and outside.
-	x, _ := tensor.FromFloat32([]float32{-3.0, -0.5, 0.5, 3.0}, []int64{4})
+	x, _ := tensor.FromFloat32([]float32{-3.0, -0.5, 0.5, 3.0}, []int64{4}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Clamp(-1,1)", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Clamp(-1, 1).Sum()
 	}, []*tensor.Tensor{x}, 1e-3)
 }
 
 func TestGradCheckSqueeze(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Squeeze(0)", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Squeeze(0).Sum()
 	}, []*tensor.Tensor{x}, 1e-3)
 }
 
 func TestGradCheckUnsqueeze(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Unsqueeze(0)", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Unsqueeze(0).Sum()
 	}, []*tensor.Tensor{x}, 1e-3)
 }
 
 func TestGradCheckFlatten(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Flatten(0)", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Flatten(0).Sum()
 	}, []*tensor.Tensor{x}, 1e-3)
 }
 
 func TestGradCheckPermute(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3})
+	skipIfDeviceUnavailable(t)
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	gradCheck(t, "Permute(1,0)", func(v []*autograd.Variable) *autograd.Variable {
 		return v[0].Permute(1, 0).Sum()
 	}, []*tensor.Tensor{x}, 1e-3)

@@ -3,6 +3,7 @@ package graph
 import (
 	"fmt"
 	"math"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -11,11 +12,19 @@ import (
 	"github.com/fab2s/goDl/tensor"
 )
 
+func mustBatchNorm(numFeatures int64) *nn.BatchNorm {
+	bn, err := nn.NewBatchNorm(numFeatures)
+	if err != nil {
+		panic(err)
+	}
+	return bn
+}
+
 // setLinearWeights replaces a Linear layer's weights and biases with known values.
 func setLinearWeights(l *nn.Linear, wData, bData []float32) {
-	w, _ := tensor.FromFloat32(wData, []int64{l.Weight.Data().Shape()[0], l.Weight.Data().Shape()[1]})
+	w, _ := tensor.FromFloat32(wData, []int64{l.Weight.Data().Shape()[0], l.Weight.Data().Shape()[1]}, tensor.WithDevice(testDevice))
 	l.Weight.SetData(w)
-	b, _ := tensor.FromFloat32(bData, l.Bias.Data().Shape())
+	b, _ := tensor.FromFloat32(bData, l.Bias.Data().Shape(), tensor.WithDevice(testDevice))
 	l.Bias.SetData(b)
 }
 
@@ -100,12 +109,12 @@ type namedRouter struct {
 }
 
 func (r *namedRouter) Forward(_ ...*autograd.Variable) *autograd.Variable {
-	t, _ := tensor.FromFloat32([]float32{r.index}, []int64{1})
+	t, _ := tensor.FromFloat32([]float32{r.index}, []int64{1}, tensor.WithDevice(testDevice))
 	return autograd.NewVariable(t, false)
 }
 
 func (r *namedRouter) ForwardNamed(_ *autograd.Variable, _ map[string]*autograd.Variable) *autograd.Variable {
-	t, _ := tensor.FromFloat32([]float32{r.index}, []int64{1})
+	t, _ := tensor.FromFloat32([]float32{r.index}, []int64{1}, tensor.WithDevice(testDevice))
 	return autograd.NewVariable(t, false)
 }
 
@@ -115,6 +124,8 @@ func (r *namedRouter) Parameters() []*nn.Parameter { return nil }
 // --- Tests ---
 
 func TestChainForward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Build: Linear(2→3) → ReLU → Linear(3→1)
 	l1, err := nn.NewLinear(2, 3)
 	if err != nil {
@@ -142,9 +153,10 @@ func TestChainForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Input: [1, 2]
-	x, err := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, err := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,6 +183,8 @@ func TestChainForward(t *testing.T) {
 }
 
 func TestChainBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Two separate but identically-initialized chains:
 	// one through the graph, one direct.
 	l1g, _ := nn.NewLinear(2, 2)
@@ -192,16 +206,17 @@ func TestChainBackward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Forward + backward through graph.
-	x1, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x1, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	gOut := g.Forward(autograd.NewVariable(x1, false))
 	if err := gOut.Backward(); err != nil {
 		t.Fatal("graph backward:", err)
 	}
 
 	// Forward + backward direct.
-	x2, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x2, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	dOut := l2d.Forward(nn.NewReLU().Forward(l1d.Forward(autograd.NewVariable(x2, false))))
 	if err := dOut.Backward(); err != nil {
 		t.Fatal("direct backward:", err)
@@ -228,6 +243,8 @@ func TestChainBackward(t *testing.T) {
 }
 
 func TestGraphAsModule(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Inner graph: Linear(2→2) → ReLU
 	innerL, _ := nn.NewLinear(2, 2)
 	setLinearWeights(innerL, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -245,9 +262,10 @@ func TestGraphAsModule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	outer.SetDevice(testDevice)
 
 	// Forward.
-	x, _ := tensor.FromFloat32([]float32{3, -1}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{3, -1}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := outer.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -268,6 +286,8 @@ func TestGraphAsModule(t *testing.T) {
 }
 
 func TestAlso(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Build: Linear(2→2) → Also(Linear(2→2))
 	// Result should be: input + transform(input)
 	l1, _ := nn.NewLinear(2, 2)
@@ -280,8 +300,9 @@ func TestAlso(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 3}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 3}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -298,6 +319,8 @@ func TestAlso(t *testing.T) {
 }
 
 func TestSplitMerge(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Split into two Linear branches, merge with Add.
 	branchA, _ := nn.NewLinear(2, 2)
 	setLinearWeights(branchA, []float32{1, 0, 0, 1}, []float32{1, 1}) // identity + 1
@@ -313,8 +336,9 @@ func TestSplitMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -332,6 +356,8 @@ func TestSplitMerge(t *testing.T) {
 }
 
 func TestSplitMergeBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Verify gradients flow through both branches.
 	branchA, _ := nn.NewLinear(2, 1)
 	setLinearWeights(branchA, []float32{1, 0}, []float32{0})
@@ -346,8 +372,9 @@ func TestSplitMergeBackward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{3, 5}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{3, 5}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	// branchA: 3*1+5*0 = 3, branchB: 3*0+5*1 = 5, Add: 8
 	if err := result.Err(); err != nil {
@@ -390,15 +417,18 @@ func TestParameters(t *testing.T) {
 }
 
 func TestErrorWrongInputCount(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	l, _ := nn.NewLinear(2, 1)
 	g, err := From(l).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Pass 2 inputs when graph expects 1.
-	x1, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
-	x2, _ := tensor.FromFloat32([]float32{3, 4}, []int64{1, 2})
+	x1, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
+	x2, _ := tensor.FromFloat32([]float32{3, 4}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(
 		autograd.NewVariable(x1, false),
 		autograd.NewVariable(x2, false),
@@ -424,6 +454,8 @@ func TestBuildOpenStreamsError(t *testing.T) {
 }
 
 func TestParallelLevels(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Verify that Split branches land in the same topological level
 	// and produce correct results under parallel execution.
 	// Graph: entry → Split(A, B, C) → Merge(Add)
@@ -443,6 +475,7 @@ func TestParallelLevels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Verify we have a level with 3 parallel nodes.
 	found3 := false
@@ -465,7 +498,7 @@ func TestParallelLevels(t *testing.T) {
 
 	// Run forward many times to stress parallel execution.
 	for i := range 20 {
-		x, _ := tensor.FromFloat32([]float32{float32(i + 1), float32(i + 2)}, []int64{1, 2})
+		x, _ := tensor.FromFloat32([]float32{float32(i + 1), float32(i + 2)}, []int64{1, 2}, tensor.WithDevice(testDevice))
 		result := g.Forward(autograd.NewVariable(x, false))
 		if err := result.Err(); err != nil {
 			t.Fatalf("iteration %d: %v", i, err)
@@ -485,6 +518,8 @@ func TestParallelLevels(t *testing.T) {
 }
 
 func TestParallelBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// 3-way split with backward — verify all branches get gradients.
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -502,8 +537,9 @@ func TestParallelBackward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{2, 3}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{2, 3}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	// a: 2, b: 3, c: 5, Add: 10
 	if !approxEqual(f32(result), 10.0, 1e-5) {
@@ -526,6 +562,8 @@ func TestParallelBackward(t *testing.T) {
 }
 
 func TestLoopForward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Body: scale by 2 (Linear with W=2*I, b=0)
 	// Loop 3 times: [1,2] → [2,4] → [4,8] → [8,16]
 	entry, _ := nn.NewLinear(2, 2)
@@ -538,8 +576,9 @@ func TestLoopForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -554,6 +593,8 @@ func TestLoopForward(t *testing.T) {
 }
 
 func TestLoopBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Body: adds a learnable bias each iteration.
 	// state_{i+1} = state_i + bias
 	// After N iterations: result = input + N * bias
@@ -570,8 +611,9 @@ func TestLoopBackward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -603,6 +645,8 @@ func TestLoopBackward(t *testing.T) {
 }
 
 func TestLoopSingleIteration(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Loop with N=1 should be equivalent to a single Forward.
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -615,13 +659,14 @@ func TestLoopSingleIteration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{2, 5}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{2, 5}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	loopResult := g.Forward(autograd.NewVariable(x, false))
 	loopVals := allF32(loopResult)
 
 	// Direct: body(entry([2,5])) = body([2,5]) = [3*2+1, 3*5+1] = [7, 16]
-	x2, _ := tensor.FromFloat32([]float32{2, 5}, []int64{1, 2})
+	x2, _ := tensor.FromFloat32([]float32{2, 5}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	directResult := body.Forward(entry.Forward(autograd.NewVariable(x2, false)))
 	directVals := allF32(directResult)
 
@@ -634,6 +679,8 @@ func TestLoopSingleIteration(t *testing.T) {
 }
 
 func TestLoopChained(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Full chain: entry → Loop(body, 3) → output layer
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -648,8 +695,9 @@ func TestLoopChained(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{0, 0}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{0, 0}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -710,17 +758,19 @@ func (c *tracedCounter) Forward(inputs ...*autograd.Variable) *autograd.Variable
 	return inputs[0] // pass through
 }
 func (c *tracedCounter) Parameters() []*nn.Parameter { return nil }
-func (c *tracedCounter) Reset(batchSize int64, device tensor.Device) {
+func (c *tracedCounter) Reset(batchSize int64, _ tensor.Device) {
 	c.count = 0
 	c.resetCt++
 	c.lastBatch = batchSize
 }
 func (c *tracedCounter) Trace() *autograd.Variable {
-	t, _ := tensor.FromFloat32([]float32{float32(c.count)}, []int64{1, 1})
+	t, _ := tensor.FromFloat32([]float32{float32(c.count)}, []int64{1, 1}, tensor.WithDevice(testDevice))
 	return autograd.NewVariable(t, false)
 }
 
 func TestLoopTraced(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	body := &tracedCounter{}
 
 	entry, _ := nn.NewLinear(2, 2)
@@ -730,8 +780,9 @@ func TestLoopTraced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x, false))
 
 	// Auto-reset should have been called.
@@ -769,6 +820,8 @@ func TestLoopTraced(t *testing.T) {
 }
 
 func TestLoopTracedNil(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Non-Traced body: Traces should return nil.
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -779,8 +832,9 @@ func TestLoopTracedNil(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x, false))
 
 	if traces := g.Traces("loop"); traces != nil {
@@ -791,6 +845,8 @@ func TestLoopTracedNil(t *testing.T) {
 // --- Tag / Using tests ---
 
 func TestTag(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Tag should not affect the flow.
 	l1, _ := nn.NewLinear(2, 2)
 	setLinearWeights(l1, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -801,8 +857,9 @@ func TestTag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{3, 5}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{3, 5}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -816,6 +873,8 @@ func TestTag(t *testing.T) {
 }
 
 func TestUsing(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Cross-attention style: module receives stream + tagged reference.
 	// entry → Tag("src") → projection → crossAttn.Using("src")
 	// crossAttn Forward receives [projected_input, source]
@@ -832,8 +891,9 @@ func TestUsing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 3}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 3}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -850,6 +910,8 @@ func TestUsing(t *testing.T) {
 }
 
 func TestUsingBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Verify gradients flow through Using references.
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -863,8 +925,9 @@ func TestUsingBackward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{2, 3}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{2, 3}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	loss := result.Sum()
 	if err := loss.Backward(); err != nil {
@@ -902,6 +965,8 @@ func TestUsingUnresolvedForwardRef(t *testing.T) {
 }
 
 func TestSplitUsing(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Split + Using: all branches receive the tagged reference.
 	// entry → Tag("ctx") → Split(branchA, branchB).Using("ctx") → Merge(Add)
 	// Each branch is Add(), so Forward([stream, ctx]) = stream + ctx.
@@ -920,8 +985,9 @@ func TestSplitUsing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 3}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 3}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -941,6 +1007,8 @@ func TestSplitUsing(t *testing.T) {
 // --- Input tests ---
 
 func TestInputForward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Two-input graph: primary stream adds auxiliary input via Using.
 	// From(identity).Tag("main") → Input("aux") → Through(Add).Using("aux")
 	// Forward(main, aux) = main + aux
@@ -955,9 +1023,10 @@ func TestInputForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	mainT, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
-	auxT, _ := tensor.FromFloat32([]float32{10, 20}, []int64{1, 2})
+	mainT, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
+	auxT, _ := tensor.FromFloat32([]float32{10, 20}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(
 		autograd.NewVariable(mainT, false),
 		autograd.NewVariable(auxT, false),
@@ -974,6 +1043,8 @@ func TestInputForward(t *testing.T) {
 }
 
 func TestInputBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Gradients flow through both inputs.
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{2, 0, 0, 2}, []float32{0, 0}) // 2x
@@ -985,9 +1056,10 @@ func TestInputBackward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	mainT, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
-	auxT, _ := tensor.FromFloat32([]float32{10, 20}, []int64{1, 2})
+	mainT, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
+	auxT, _ := tensor.FromFloat32([]float32{10, 20}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	mainVar := autograd.NewVariable(mainT, true)
 	auxVar := autograd.NewVariable(auxT, true)
 
@@ -1011,6 +1083,8 @@ func TestInputBackward(t *testing.T) {
 }
 
 func TestInputMultiple(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Three inputs: main + two auxiliary.
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -1023,10 +1097,11 @@ func TestInputMultiple(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	mainT, _ := tensor.FromFloat32([]float32{1, 1}, []int64{1, 2})
-	aT, _ := tensor.FromFloat32([]float32{10, 10}, []int64{1, 2})
-	bT, _ := tensor.FromFloat32([]float32{100, 100}, []int64{1, 2})
+	mainT, _ := tensor.FromFloat32([]float32{1, 1}, []int64{1, 2}, tensor.WithDevice(testDevice))
+	aT, _ := tensor.FromFloat32([]float32{10, 10}, []int64{1, 2}, tensor.WithDevice(testDevice))
+	bT, _ := tensor.FromFloat32([]float32{100, 100}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(
 		autograd.NewVariable(mainT, false),
 		autograd.NewVariable(aT, false),
@@ -1071,6 +1146,8 @@ func TestInputDOT(t *testing.T) {
 }
 
 func TestInputWrongCount(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	entry, _ := nn.NewLinear(2, 2)
 	g, err := From(entry).Tag("main").
 		Input("aux").
@@ -1079,9 +1156,10 @@ func TestInputWrongCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Only one input when two expected.
-	mainT, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	mainT, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(mainT, false))
 	if result.Err() == nil {
 		t.Error("expected error for wrong input count")
@@ -1091,6 +1169,8 @@ func TestInputWrongCount(t *testing.T) {
 // --- Gate tests ---
 
 func TestGateForwardEqual(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Equal weighting: router outputs [0,0] → softmax → [0.5, 0.5]
 	// Expert A: identity, Expert B: 2x
 	// Result: 0.5*x + 0.5*2x = 1.5x
@@ -1111,8 +1191,9 @@ func TestGateForwardEqual(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{2, 4}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{2, 4}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -1127,6 +1208,8 @@ func TestGateForwardEqual(t *testing.T) {
 }
 
 func TestGateForwardOneSided(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// One-sided routing: router outputs [10, -10] → softmax ≈ [1, 0]
 	// Result ≈ expertA output
 	entry, _ := nn.NewLinear(2, 2)
@@ -1146,8 +1229,9 @@ func TestGateForwardOneSided(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{2, 4}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{2, 4}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -1162,6 +1246,8 @@ func TestGateForwardOneSided(t *testing.T) {
 }
 
 func TestGateBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Verify gradients flow through all experts and the router.
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -1180,8 +1266,9 @@ func TestGateBackward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{2, 4}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{2, 4}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	loss := result.Sum()
 	if err := loss.Backward(); err != nil {
@@ -1201,6 +1288,8 @@ func TestGateBackward(t *testing.T) {
 }
 
 func TestGateWithUsing(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Gate with Using: router receives stream + tagged reference as separate
 	// Forward arguments. Use Add() as router — it sums all inputs, producing
 	// a [batch, 2] tensor that softmax normalizes into expert weights.
@@ -1228,8 +1317,9 @@ func TestGateWithUsing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 3}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 3}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -1277,6 +1367,8 @@ func TestGateParameters(t *testing.T) {
 // --- Forward ref tests ---
 
 func TestForwardRef(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Forward reference: Using before Tag. State carries between Forward() calls.
 	// Graph: entry → add.Using("memory") → identity.Tag("memory")
 	// Pass 1: add gets [stream] (memory is nil) → identity → state captured
@@ -1294,8 +1386,9 @@ func TestForwardRef(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 
 	// Pass 1: no memory → add([1,2]) = [1,2] → identity = [1,2]
 	r1 := g.Forward(autograd.NewVariable(x, false))
@@ -1328,6 +1421,8 @@ func TestForwardRef(t *testing.T) {
 }
 
 func TestForwardRefResetState(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
 
@@ -1341,8 +1436,9 @@ func TestForwardRefResetState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 1}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 1}, []int64{1, 2}, tensor.WithDevice(testDevice))
 
 	// Build up state.
 	g.Forward(autograd.NewVariable(x, false)) // [1,1]
@@ -1359,6 +1455,8 @@ func TestForwardRefResetState(t *testing.T) {
 }
 
 func TestForwardRefDetachState(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Verify DetachState breaks the gradient chain.
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -1373,8 +1471,9 @@ func TestForwardRefDetachState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 
 	// Pass 1: populate state.
 	g.Forward(autograd.NewVariable(x, false))
@@ -1396,6 +1495,8 @@ func TestForwardRefDetachState(t *testing.T) {
 }
 
 func TestDetachStateRecursive(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Verify DetachState recurses into sub-graphs.
 	// Inner graph has forward-ref state; outer wraps it.
 	entry, _ := nn.NewLinear(2, 2)
@@ -1415,8 +1516,9 @@ func TestDetachStateRecursive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	outer.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 
 	// Pass 1: populate inner state.
 	outer.Forward(autograd.NewVariable(x, false))
@@ -1467,6 +1569,8 @@ func TestDetachStateCallsDetachable(t *testing.T) {
 }
 
 func TestForwardRefLoop(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Recurrent state inside a loop body.
 	// Body graph: add.Using("hidden") → identity.Tag("hidden")
 	// Each iteration accumulates: output = input + hidden_prev
@@ -1484,8 +1588,9 @@ func TestForwardRefLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -1506,6 +1611,8 @@ func TestForwardRefLoop(t *testing.T) {
 }
 
 func TestForwardRefBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Verify gradients flow through forward ref state.
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -1520,8 +1627,9 @@ func TestForwardRefBackward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 
 	// Pass 1: populate state. proj([1,2]) = [2,4]
 	g.Forward(autograd.NewVariable(x, false))
@@ -1543,6 +1651,8 @@ func TestForwardRefBackward(t *testing.T) {
 }
 
 func TestForwardRefMixedRefs(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Same tag used as both forward and backward reference.
 	// Through(attn).Using("state") → Through(ffn).Tag("state") → Through(decoder).Using("state")
 	// attn gets PREVIOUS state (forward ref), decoder gets CURRENT state (backward ref).
@@ -1562,8 +1672,9 @@ func TestForwardRefMixedRefs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 
 	// Pass 1: attn([1,2], nil)=[1,2], ffn=[1,2] (state set), decoder=Add([1,2],[1,2])=[2,4]
 	r1 := g.Forward(autograd.NewVariable(x, false))
@@ -1583,6 +1694,8 @@ func TestForwardRefMixedRefs(t *testing.T) {
 }
 
 func TestForwardRefAutoZero(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Verify that plain Add() (no nil-checking) works as a forward ref
 	// consumer because the graph auto-fills nil state with zeros.
 	entry, _ := nn.NewLinear(2, 2)
@@ -1598,8 +1711,9 @@ func TestForwardRefAutoZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 
 	// Pass 1: memory auto-zeroed → Add([1,2], [0,0]) = [1,2]
 	r1 := g.Forward(autograd.NewVariable(x, false))
@@ -1625,6 +1739,8 @@ func TestForwardRefAutoZero(t *testing.T) {
 }
 
 func TestParallelWithRace(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Build a graph with parallel branches that each do real computation.
 	// Run with -race to verify no data races.
 	entry, _ := nn.NewLinear(4, 4)
@@ -1639,8 +1755,9 @@ func TestParallelWithRace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4})
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -1657,6 +1774,8 @@ func TestParallelWithRace(t *testing.T) {
 // --- SetTraining ---
 
 func TestSetTrainingPropagates(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Graph: Linear → Dropout → Linear
 	// SetTraining(false) should make dropout passthrough.
 	l1, err := nn.NewLinear(4, 4)
@@ -1673,8 +1792,9 @@ func TestSetTrainingPropagates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4})
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4}, tensor.WithDevice(testDevice))
 	input := autograd.NewVariable(x, false)
 
 	// Eval mode: dropout is identity, output should be deterministic.
@@ -1717,6 +1837,8 @@ func TestSetTrainingPropagates(t *testing.T) {
 }
 
 func TestSetTrainingNestedGraph(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Inner graph with dropout.
 	drop := nn.NewDropout(0.99)
 	inner, err := From(drop).Build()
@@ -1733,8 +1855,9 @@ func TestSetTrainingNestedGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	outer.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4})
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4}, tensor.WithDevice(testDevice))
 	input := autograd.NewVariable(x, false)
 
 	// Eval mode on outer should propagate to inner's dropout.
@@ -1754,12 +1877,14 @@ func TestSetTrainingNestedGraph(t *testing.T) {
 }
 
 func TestSetTrainingHelperFunction(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// nn.SetTraining works on standalone modules and is a no-op on
 	// modules that don't implement TrainToggler.
 	drop := nn.NewDropout(0.5)
 	nn.SetTraining(drop, false)
 
-	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	xt, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	x := autograd.NewVariable(xt, false)
 	out := drop.Forward(x)
 	data, _ := out.Data().Float32Data()
@@ -1779,6 +1904,8 @@ func TestSetTrainingHelperFunction(t *testing.T) {
 // --- While loop tests ---
 
 func TestWhileForward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Body doubles each iteration. ThresholdHalt(10) halts when max > 10.
 	// [1,2] → check: max=2 ≤ 10 → body → [2,4]
 	//       → check: max=4 ≤ 10 → body → [4,8]
@@ -1795,8 +1922,9 @@ func TestWhileForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -1810,6 +1938,8 @@ func TestWhileForward(t *testing.T) {
 }
 
 func TestWhileStatePredicate(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Body doubles. ThresholdHalt(50): halt when max > 50.
 	// check [1,2] max=2 → body → [2,4]
 	// check [2,4] max=4 → body → [4,8]
@@ -1828,8 +1958,9 @@ func TestWhileStatePredicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	vals := allF32(result)
 
@@ -1840,6 +1971,8 @@ func TestWhileStatePredicate(t *testing.T) {
 }
 
 func TestWhileZeroIterations(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// ThresholdHalt(0): input [3,7] has max=7 > 0, halts immediately.
 	// Body never runs — input passes through.
 	entry, _ := nn.NewLinear(2, 2)
@@ -1852,8 +1985,9 @@ func TestWhileZeroIterations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{3, 7}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{3, 7}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	vals := allF32(result)
 
@@ -1865,6 +1999,8 @@ func TestWhileZeroIterations(t *testing.T) {
 }
 
 func TestWhileBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Body: identity + bias [0.1, 0.2]. ThresholdHalt(2.7) gives 4 iterations.
 	// [1,2] → [1.1,2.2] → [1.2,2.4] → [1.3,2.6] → [1.4,2.8]
 	// check [1.4,2.8] max=2.8 > 2.7 → halt
@@ -1879,8 +2015,9 @@ func TestWhileBackward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	loss := result.Sum()
 	if err := loss.Backward(); err != nil {
@@ -1912,13 +2049,15 @@ func (h *thresholdHalt) Forward(inputs ...*autograd.Variable) *autograd.Variable
 		}
 	}
 	val := maxVal - h.threshold // positive when exceeded → halt
-	t, _ := tensor.FromFloat32([]float32{val}, []int64{1})
+	t, _ := tensor.FromFloat32([]float32{val}, []int64{1}, tensor.WithDevice(testDevice))
 	return autograd.NewVariable(t, false)
 }
 
 func (h *thresholdHalt) Parameters() []*nn.Parameter { return nil }
 
 func TestUntilForward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Body doubles. Halt when max element > 50.
 	// [1,2] → body → [2,4] check: 4<=50 → continue
 	// → body → [4,8] check: 8<=50 → continue
@@ -1938,8 +2077,9 @@ func TestUntilForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	vals := allF32(result)
 
@@ -1950,6 +2090,8 @@ func TestUntilForward(t *testing.T) {
 }
 
 func TestUntilMaxIter(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Condition never halts — maxIter is the bound.
 	// Body doubles, maxIter=3. Result: [1,2] → [2,4] → [4,8] → [8,16]
 	entry, _ := nn.NewLinear(2, 2)
@@ -1965,8 +2107,9 @@ func TestUntilMaxIter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	vals := allF32(result)
 
@@ -1978,6 +2121,8 @@ func TestUntilMaxIter(t *testing.T) {
 }
 
 func TestUntilBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Body: identity + bias. Halt after 3 iterations (threshold triggers).
 	// State: [1,2] → [1.1,2.2] → [1.2,2.4] → [1.3,2.6] → halt (max 2.6 > 2.5)
 	entry, _ := nn.NewLinear(2, 2)
@@ -1992,8 +2137,9 @@ func TestUntilBackward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -2062,6 +2208,8 @@ func (h *learnedHalt) Parameters() []*nn.Parameter {
 }
 
 func TestUntilSetTraining(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Verify SetTraining propagates to the condition module.
 	body, _ := nn.NewLinear(2, 2)
 	drop := nn.NewDropout(0.99)
@@ -2073,10 +2221,11 @@ func TestUntilSetTraining(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// In eval mode, dropout should be identity.
 	g.SetTraining(false)
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -2098,7 +2247,7 @@ type dropoutCondWrapper struct {
 
 func (d *dropoutCondWrapper) Forward(inputs ...*autograd.Variable) *autograd.Variable {
 	_ = d.drop.Forward(inputs...) // apply dropout (tests SetTraining propagation)
-	t, _ := tensor.FromFloat32([]float32{-1}, []int64{1})
+	t, _ := tensor.FromFloat32([]float32{-1}, []int64{1}, tensor.WithDevice(testDevice))
 	return autograd.NewVariable(t, false)
 }
 
@@ -2116,13 +2265,15 @@ type fixedRouter struct {
 }
 
 func (r *fixedRouter) Forward(_ ...*autograd.Variable) *autograd.Variable {
-	t, _ := tensor.FromFloat32([]float32{r.index}, []int64{1})
+	t, _ := tensor.FromFloat32([]float32{r.index}, []int64{1}, tensor.WithDevice(testDevice))
 	return autograd.NewVariable(t, false)
 }
 
 func (r *fixedRouter) Parameters() []*nn.Parameter { return nil }
 
 func TestSwitchForward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Branch 0: double, Branch 1: triple.
 	// Router selects branch 1.
 	entry, _ := nn.NewLinear(2, 2)
@@ -2140,8 +2291,9 @@ func TestSwitchForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -2156,6 +2308,8 @@ func TestSwitchForward(t *testing.T) {
 }
 
 func TestSwitchSelectsBranch0(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
 
@@ -2171,8 +2325,9 @@ func TestSwitchSelectsBranch0(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	vals := allF32(result)
 
@@ -2197,6 +2352,8 @@ func (c *countingModule) Forward(inputs ...*autograd.Variable) *autograd.Variabl
 func (c *countingModule) Parameters() []*nn.Parameter { return c.inner.Parameters() }
 
 func TestSwitchOnlySelectedRuns(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
 
@@ -2214,8 +2371,9 @@ func TestSwitchOnlySelectedRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(x, false))
 
 	if branch0.count != 0 {
@@ -2228,6 +2386,8 @@ func TestSwitchOnlySelectedRuns(t *testing.T) {
 }
 
 func TestSwitchBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Branch 0: W * x + b0, Branch 1: W * x + b1
 	// Router selects branch 1.
 	// Gradient should flow through branch 1 only.
@@ -2246,8 +2406,9 @@ func TestSwitchBackward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, true))
 	loss := result.Sum()
 	if err := loss.Backward(); err != nil {
@@ -2287,6 +2448,8 @@ func TestSwitchParameters(t *testing.T) {
 }
 
 func TestSwitchSetTraining(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
 	drop0 := nn.NewDropout(0.99)
@@ -2297,10 +2460,11 @@ func TestSwitchSetTraining(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Eval mode: dropout should be identity.
 	g.SetTraining(false)
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	vals := allF32(result)
 
@@ -2326,13 +2490,15 @@ func (r *argmaxRouter) Forward(inputs ...*autograd.Variable) *autograd.Variable 
 			selected = i + 1
 		}
 	}
-	t, _ := tensor.FromFloat32([]float32{float32(selected)}, []int64{1})
+	t, _ := tensor.FromFloat32([]float32{float32(selected)}, []int64{1}, tensor.WithDevice(testDevice))
 	return autograd.NewVariable(t, false)
 }
 
 func (r *argmaxRouter) Parameters() []*nn.Parameter { return r.inner.Parameters() }
 
 func TestSwitchDataDependentRouting(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Router: Linear(2→2) with weights that make input [1,2] select branch 1
 	// and input [2,1] select branch 0.
 	routerLinear, _ := nn.NewLinear(2, 2)
@@ -2355,9 +2521,10 @@ func TestSwitchDataDependentRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Input [1,2] → router selects branch 0 (double) → [2, 4]
-	x1, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x1, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	r1 := g.Forward(autograd.NewVariable(x1, false))
 	v1 := allF32(r1)
 	if !approxEqual(v1[0], 2.0, 1e-5) || !approxEqual(v1[1], 4.0, 1e-5) {
@@ -2365,7 +2532,7 @@ func TestSwitchDataDependentRouting(t *testing.T) {
 	}
 
 	// Input [2,1] → router selects branch 1 (triple) → [6, 3]
-	x2, _ := tensor.FromFloat32([]float32{2, 1}, []int64{1, 2})
+	x2, _ := tensor.FromFloat32([]float32{2, 1}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	r2 := g.Forward(autograd.NewVariable(x2, false))
 	v2 := allF32(r2)
 	if !approxEqual(v2[0], 6.0, 1e-5) || !approxEqual(v2[1], 3.0, 1e-5) {
@@ -2376,6 +2543,8 @@ func TestSwitchDataDependentRouting(t *testing.T) {
 }
 
 func TestSwitchWithUsing(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Router uses a tagged reference to make its decision.
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
@@ -2399,8 +2568,9 @@ func TestSwitchWithUsing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -2424,7 +2594,7 @@ func (r *contextRouter) Forward(inputs ...*autograd.Variable) *autograd.Variable
 	if len(inputs) < 2 {
 		return autograd.ErrVariable(fmt.Errorf("contextRouter: expected >=2 inputs, got %d", len(inputs)))
 	}
-	t, _ := tensor.FromFloat32([]float32{r.index}, []int64{1})
+	t, _ := tensor.FromFloat32([]float32{r.index}, []int64{1}, tensor.WithDevice(testDevice))
 	return autograd.NewVariable(t, false)
 }
 
@@ -2504,6 +2674,8 @@ func TestNamedInputExtraRef(t *testing.T) {
 }
 
 func TestNamedInputCorrect(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	entry, _ := nn.NewLinear(2, 4)
 	router := &namedRouter{index: 0, expected: []string{"context"}}
 	branchA, _ := nn.NewLinear(4, 4)
@@ -2515,8 +2687,9 @@ func TestNamedInputCorrect(t *testing.T) {
 	if err != nil {
 		t.Fatal("build:", err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal("forward:", err)
@@ -2527,6 +2700,8 @@ func TestNamedInputCorrect(t *testing.T) {
 // --- Map tests ---
 
 func TestMapEach(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Body: doubles each element (W=2*I, b=0)
 	// Input: [3, 2] (3 elements of size 2)
 	// Map slices into 3 × [1,2], doubles each, cats back to [3, 2].
@@ -2540,9 +2715,10 @@ func TestMapEach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// Input: [3, 2] — three 2-element vectors.
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{3, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{3, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -2562,6 +2738,8 @@ func TestMapEach(t *testing.T) {
 }
 
 func TestMapOver(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Tag the entry output, then Map over it.
 	doubler, _ := nn.NewLinear(2, 2)
 	setLinearWeights(doubler, []float32{2, 0, 0, 2}, []float32{0, 0})
@@ -2573,8 +2751,9 @@ func TestMapOver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -2591,6 +2770,8 @@ func TestMapOver(t *testing.T) {
 }
 
 func TestMapBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Body: identity + learnable bias. After map, gradient of loss
 	// w.r.t. bias should equal the number of elements (each contributes 1).
 	body, _ := nn.NewLinear(2, 2)
@@ -2603,9 +2784,10 @@ func TestMapBackward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	// 3 elements → body.bias gradient should be 3 for each component.
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{3, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{3, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, true))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -2657,6 +2839,8 @@ func TestMapOverUnknownTag(t *testing.T) {
 }
 
 func TestMapGraphAsModule(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Body is a sub-graph: Linear → GELU → LayerNorm.
 	subBody, _ := nn.NewLinear(2, 2)
 	sub, err := From(subBody).Through(nn.NewGELU()).Build()
@@ -2671,8 +2855,9 @@ func TestMapGraphAsModule(t *testing.T) {
 	if err != nil {
 		t.Fatal("build:", err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal("forward:", err)
@@ -2686,6 +2871,8 @@ func TestMapGraphAsModule(t *testing.T) {
 }
 
 func TestMapSetTraining(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Body contains Dropout — should propagate training mode.
 	body, err := From(nn.NewDropout(0.99)).Build()
 	if err != nil {
@@ -2699,8 +2886,9 @@ func TestMapSetTraining(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2}, tensor.WithDevice(testDevice))
 
 	// In eval mode, Dropout is identity.
 	g.SetTraining(false)
@@ -2719,6 +2907,8 @@ func TestMapSetTraining(t *testing.T) {
 }
 
 func TestMapSlices(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Body: doubles each element. Input [1, 8], Slices(4) → 4 × [1, 2].
 	// Each [1,2] is doubled → cat [4, 2] → recompose [1, 8].
 	doubler, _ := nn.NewLinear(2, 2)
@@ -2730,8 +2920,9 @@ func TestMapSlices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -2749,6 +2940,8 @@ func TestMapSlices(t *testing.T) {
 }
 
 func TestMapSlicesDynamicBatch(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Verify Slices handles dynamic batch sizes.
 	// Input [3, 4], Slices(2) → 6 × [1, 2] → body → recompose [3, 4].
 	identity, _ := nn.NewLinear(2, 2)
@@ -2766,12 +2959,13 @@ func TestMapSlicesDynamicBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
 	x, _ := tensor.FromFloat32([]float32{
 		1, 2, 3, 4,
 		5, 6, 7, 8,
 		9, 10, 11, 12,
-	}, []int64{3, 4})
+	}, []int64{3, 4}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -2793,6 +2987,8 @@ func TestMapSlicesDynamicBatch(t *testing.T) {
 }
 
 func TestMapSlicesBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Body: identity + bias. Slices(2) on [1, 4] → 2 elements of [1, 2].
 	// Bias gradient should be 2 (one contribution per slice).
 	body, _ := nn.NewLinear(2, 2)
@@ -2810,8 +3006,9 @@ func TestMapSlicesBackward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4})
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, true))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -2832,16 +3029,20 @@ func TestMapSlicesBackward(t *testing.T) {
 }
 
 func TestMapBatchedEach(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Verify batched Map.Each produces same results as element-wise.
 	body, _ := nn.NewLinear(2, 2)
 	setLinearWeights(body, []float32{2, 0, 0, 2}, []float32{1, 1})
 
 	// Element-wise.
 	g1, _ := From(body).Map(body).Each().Build()
+	g1.SetDevice(testDevice)
 	// Batched.
 	g2, _ := From(body).Map(body).Batched().Each().Build()
+	g2.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{3, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{3, 2}, tensor.WithDevice(testDevice))
 	r1 := g1.Forward(autograd.NewVariable(x, false))
 	r2 := g2.Forward(autograd.NewVariable(x, false))
 
@@ -2857,6 +3058,8 @@ func TestMapBatchedEach(t *testing.T) {
 }
 
 func TestMapBatchedSlices(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	body, _ := nn.NewLinear(2, 2)
 	setLinearWeights(body, []float32{1, 0, 0, 1}, []float32{0, 0})
 
@@ -2867,10 +3070,12 @@ func TestMapBatchedSlices(t *testing.T) {
 
 	// Element-wise slices.
 	g1, _ := From(entry1).Map(body).Slices(4).Build()
+	g1.SetDevice(testDevice)
 	// Batched slices.
 	g2, _ := From(entry2).Map(body).Batched().Slices(4).Build()
+	g2.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6, 7, 8}, []int64{1, 8})
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6, 7, 8}, []int64{1, 8}, tensor.WithDevice(testDevice))
 	r1 := g1.Forward(autograd.NewVariable(x, false))
 	r2 := g2.Forward(autograd.NewVariable(x, false))
 
@@ -2886,6 +3091,8 @@ func TestMapBatchedSlices(t *testing.T) {
 }
 
 func TestMapBatchedBackward(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	entry, _ := nn.NewLinear(2, 2)
 	setLinearWeights(entry, []float32{1, 0, 0, 1}, []float32{0, 0})
 
@@ -2893,8 +3100,9 @@ func TestMapBatchedBackward(t *testing.T) {
 	setLinearWeights(body, []float32{1, 0, 0, 1}, []float32{0, 0})
 
 	g, _ := From(entry).Map(body).Batched().Each().Build()
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, true))
 	loss := result.Sum()
 	if err := loss.Backward(); err != nil {
@@ -2912,6 +3120,8 @@ func TestMapBatchedBackward(t *testing.T) {
 }
 
 func TestReshapePrimitive(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	entry, _ := nn.NewLinear(2, 8)
 	setLinearWeights(entry, []float32{
 		1, 0, 0, 0, 0, 0, 0, 0,
@@ -2922,8 +3132,9 @@ func TestReshapePrimitive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{0, 0}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{0, 0}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	result := g.Forward(autograd.NewVariable(x, false))
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
@@ -3002,6 +3213,8 @@ func TestParametersByTag(t *testing.T) {
 }
 
 func TestFreezeUnfreeze(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	encoder, _ := nn.NewLinear(2, 4)
 	decoder, _ := nn.NewLinear(4, 2)
 
@@ -3011,8 +3224,9 @@ func TestFreezeUnfreeze(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.SetDevice(testDevice)
 
-	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2})
+	x, _ := tensor.FromFloat32([]float32{1, 2}, []int64{1, 2}, tensor.WithDevice(testDevice))
 
 	// Forward + backward to get gradients.
 	result := g.Forward(autograd.NewVariable(x, true))
@@ -3078,6 +3292,8 @@ func containsAll(s string, subs ...string) bool {
 // --- Device placement tests ---
 
 func TestSetDeviceCPU(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// SetDevice(CPU) should record device and leave CPU params unchanged.
 	l1 := nn.MustLinear(4, 8)
 	l2 := nn.MustLinear(8, 2)
@@ -3086,25 +3302,25 @@ func TestSetDeviceCPU(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g.SetDevice(tensor.CPU)
+	g.SetDevice(testDevice)
 	if g.Device() == nil {
 		t.Fatal("Device() should be non-nil after SetDevice")
 	}
-	if *g.Device() != tensor.CPU {
-		t.Fatalf("Device() = %v, want CPU", *g.Device())
+	if *g.Device() != testDevice {
+		t.Fatalf("Device() = %v, want %v", *g.Device(), testDevice)
 	}
 
 	for _, p := range g.Parameters() {
-		if p.Data().Device() != tensor.CPU {
-			t.Errorf("parameter %s on %v, want CPU", p.Name, p.Data().Device())
+		if p.Data().Device() != testDevice {
+			t.Errorf("parameter %s on %v, want %v", p.Name, p.Data().Device(), testDevice)
 		}
 	}
 
 	// Forward should still work.
-	in, _ := tensor.Ones([]int64{1, 4})
+	in, _ := tensor.Ones([]int64{1, 4}, tensor.WithDevice(testDevice))
 	out := g.Forward(autograd.NewVariable(in, false))
 	if err := out.Err(); err != nil {
-		t.Fatalf("Forward after SetDevice(CPU): %v", err)
+		t.Fatalf("Forward after SetDevice(%v): %v", testDevice, err)
 	}
 }
 
@@ -3119,6 +3335,8 @@ func TestDeviceNilByDefault(t *testing.T) {
 }
 
 func TestSetDeviceRecursive(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Sub-graph should also get device set.
 	inner, err := From(nn.MustLinear(4, 4)).Build()
 	if err != nil {
@@ -3129,17 +3347,19 @@ func TestSetDeviceRecursive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	outer.SetDevice(tensor.CPU)
+	outer.SetDevice(testDevice)
 
 	if inner.Device() == nil {
 		t.Fatal("inner graph Device() should be non-nil after outer.SetDevice")
 	}
-	if *inner.Device() != tensor.CPU {
-		t.Fatalf("inner Device() = %v, want CPU", *inner.Device())
+	if *inner.Device() != testDevice {
+		t.Fatalf("inner Device() = %v, want %v", *inner.Device(), testDevice)
 	}
 }
 
 func TestSetDeviceWithForwardRef(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Graph with forward reference — state buffer auto-fills should
 	// work after SetDevice.
 	proj := nn.MustLinear(4, 4)
@@ -3152,9 +3372,9 @@ func TestSetDeviceWithForwardRef(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g.SetDevice(tensor.CPU)
+	g.SetDevice(testDevice)
 
-	in, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4})
+	in, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{1, 4}, tensor.WithDevice(testDevice))
 	out := g.Forward(autograd.NewVariable(in, false))
 	if err := out.Err(); err != nil {
 		t.Fatalf("Forward with forward ref after SetDevice: %v", err)
@@ -3162,6 +3382,8 @@ func TestSetDeviceWithForwardRef(t *testing.T) {
 }
 
 func TestSetDeviceWithLoop(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Loop composite should propagate device.
 	body := nn.MustLinear(4, 4)
 	g, err := From(nn.MustLinear(4, 4)).
@@ -3172,16 +3394,16 @@ func TestSetDeviceWithLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g.SetDevice(tensor.CPU)
+	g.SetDevice(testDevice)
 
-	// All params should be on CPU.
+	// All params should be on testDevice.
 	for _, p := range g.Parameters() {
-		if p.Data().Device() != tensor.CPU {
-			t.Errorf("parameter %s on %v, want CPU", p.Name, p.Data().Device())
+		if p.Data().Device() != testDevice {
+			t.Errorf("parameter %s on %v, want %v", p.Name, p.Data().Device(), testDevice)
 		}
 	}
 
-	in, _ := tensor.Ones([]int64{1, 4})
+	in, _ := tensor.Ones([]int64{1, 4}, tensor.WithDevice(testDevice))
 	out := g.Forward(autograd.NewVariable(in, false))
 	if err := out.Err(); err != nil {
 		t.Fatalf("Forward after SetDevice with loop: %v", err)
@@ -3189,16 +3411,18 @@ func TestSetDeviceWithLoop(t *testing.T) {
 }
 
 func TestSetDeviceIdempotent(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	// Calling SetDevice twice with the same device is harmless.
 	g, err := From(nn.MustLinear(4, 2)).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	g.SetDevice(tensor.CPU)
-	g.SetDevice(tensor.CPU)
+	g.SetDevice(testDevice)
+	g.SetDevice(testDevice)
 
-	in, _ := tensor.Ones([]int64{1, 4})
+	in, _ := tensor.Ones([]int64{1, 4}, tensor.WithDevice(testDevice))
 	out := g.Forward(autograd.NewVariable(in, false))
 	if err := out.Err(); err != nil {
 		t.Fatalf("Forward after double SetDevice: %v", err)
@@ -3206,24 +3430,26 @@ func TestSetDeviceIdempotent(t *testing.T) {
 }
 
 func TestAutoMoveInputCPU(t *testing.T) {
-	// With SetDevice(CPU), CPU inputs should pass through unchanged.
+	skipIfDeviceUnavailable(t)
+
+	// With SetDevice(testDevice), inputs should pass through unchanged.
 	l := nn.MustLinear(4, 2)
 	g, err := From(l).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	g.SetDevice(tensor.CPU)
+	g.SetDevice(testDevice)
 
-	in, _ := tensor.Ones([]int64{1, 4})
+	in, _ := tensor.Ones([]int64{1, 4}, tensor.WithDevice(testDevice))
 	out := g.Forward(autograd.NewVariable(in, true))
 	if err := out.Err(); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	// Verify output is on CPU.
-	if out.Data().Device() != tensor.CPU {
-		t.Errorf("output on %v, want CPU", out.Data().Device())
+	// Verify output is on testDevice.
+	if out.Data().Device() != testDevice {
+		t.Errorf("output on %v, want %v", out.Data().Device(), testDevice)
 	}
 }
 
@@ -3261,6 +3487,8 @@ func (m *compositeWithBN) Parameters() []*nn.Parameter {
 }
 
 func TestSetDeviceSubModuler(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	mod := newCompositeWithBN()
 
 	g, err := From(mod).Build()
@@ -3273,27 +3501,30 @@ func TestSetDeviceSubModuler(t *testing.T) {
 		t.Fatalf("RunningMean should start on CPU")
 	}
 
-	g.SetDevice(tensor.CPU) // move to CPU (no-op, but exercises the walk)
+	g.SetDevice(testDevice)
 
 	// Verify SetDevice walked into the composite and found the BatchNorm.
-	if mod.bn.RunningMean.Device() != tensor.CPU {
-		t.Errorf("RunningMean on %v after SetDevice(CPU), want CPU", mod.bn.RunningMean.Device())
+	if mod.bn.RunningMean.Device() != testDevice {
+		t.Errorf("RunningMean on %v after SetDevice(%v), want %v", mod.bn.RunningMean.Device(), testDevice, testDevice)
 	}
 }
 
 func TestSetTrainingSubModuler(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	mod := newCompositeWithBN()
 
 	g, err := From(mod).Build()
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
+	g.SetDevice(testDevice)
 
 	// BatchNorm starts in training mode.
 	g.SetTraining(false)
 
 	// Verify SetTraining walked into the composite.
-	in, _ := tensor.Rand([]int64{2, 3})
+	in, _ := tensor.Rand([]int64{2, 3}, tensor.WithDevice(testDevice))
 	out := g.Forward(autograd.NewVariable(in, false))
 	if err := out.Err(); err != nil {
 		t.Fatalf("Forward in eval mode: %v", err)
@@ -3333,6 +3564,8 @@ func (c *compositeWithDetachable) Parameters() []*nn.Parameter { return nil }
 func (c *compositeWithDetachable) SubModules() []nn.Module     { return []nn.Module{c.inner} }
 
 func TestDetachStateSubModuler(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
 	inner := &detachableModule{}
 	mod := &compositeWithDetachable{inner: inner}
 
@@ -3340,13 +3573,366 @@ func TestDetachStateSubModuler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
+	g.SetDevice(testDevice)
 
 	// Forward to populate graph state, then DetachState.
-	in, _ := tensor.Ones([]int64{1, 1})
+	in, _ := tensor.Ones([]int64{1, 1}, tensor.WithDevice(testDevice))
 	g.Forward(autograd.NewVariable(in, false))
 	g.DetachState()
 
 	if !inner.detached {
 		t.Error("DetachState did not reach nested Detachable via SubModuler")
+	}
+}
+
+// TestMultiBatchTrainingLoop exercises the full training loop pattern:
+// forward → backward → optimizer step → ZeroGrad → DetachState → forward.
+// This is the pattern that caused a nil-pointer crash in fbrl on the second
+// forward pass, where the backward engine's deterministic tensor release
+// could interact with DetachState's state wrapping.
+func TestMultiBatchTrainingLoop(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
+	// Build a graph with forward-ref state (Using before Tag).
+	entry, _ := nn.NewLinear(2, 2)
+	proj, _ := nn.NewLinear(2, 2)
+
+	g, err := From(entry).
+		Through(&nilSafeAdd{}).Using("state").
+		Through(proj).Tag("state").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.SetDevice(testDevice)
+
+	opt := nn.NewSGD(g.Parameters(), 0.01, 0)
+
+	// Simulate 5 batches of training.
+	for batch := range 5 {
+		x, _ := tensor.FromFloat32([]float32{float32(batch + 1), float32(batch + 2)}, []int64{1, 2}, tensor.WithDevice(testDevice))
+		input := autograd.NewVariable(x, false)
+
+		result := g.Forward(input)
+		if err := result.Err(); err != nil {
+			t.Fatalf("batch %d: forward: %v", batch, err)
+		}
+
+		loss := result.Sum()
+		opt.ZeroGrad()
+		if err := loss.Backward(); err != nil {
+			t.Fatalf("batch %d: backward: %v", batch, err)
+		}
+		opt.Step()
+		g.DetachState()
+	}
+}
+
+// TestMultiBatchLoopTraining exercises multi-batch training with a Loop node.
+// The loop carries state between iterations within a batch, and DetachState
+// breaks the graph between batches.
+func TestMultiBatchLoopTraining(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
+	body, _ := nn.NewLinear(2, 2)
+
+	g, err := From(body).
+		Loop(body).For(3).
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.SetDevice(testDevice)
+
+	opt := nn.NewSGD(g.Parameters(), 0.01, 0)
+
+	for batch := range 5 {
+		x, _ := tensor.FromFloat32([]float32{float32(batch + 1), float32(batch + 2)}, []int64{1, 2}, tensor.WithDevice(testDevice))
+		input := autograd.NewVariable(x, false)
+
+		result := g.Forward(input)
+		if err := result.Err(); err != nil {
+			t.Fatalf("batch %d: forward: %v", batch, err)
+		}
+
+		loss := result.Sum()
+		opt.ZeroGrad()
+		if err := loss.Backward(); err != nil {
+			t.Fatalf("batch %d: backward: %v", batch, err)
+		}
+		opt.Step()
+		g.DetachState()
+	}
+}
+
+// TestMultiBatchWithGCStress exercises multi-batch training with aggressive
+// GC to expose any premature finalization of tensors. The GC calls between
+// steps simulate the timing conditions that caused the fbrl crash.
+func TestMultiBatchWithGCStress(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
+	entry, _ := nn.NewLinear(2, 2)
+	proj, _ := nn.NewLinear(2, 2)
+
+	g, err := From(entry).
+		Through(&nilSafeAdd{}).Using("state").
+		Through(proj).Tag("state").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.SetDevice(testDevice)
+
+	opt := nn.NewSGD(g.Parameters(), 0.01, 0)
+
+	for batch := range 10 {
+		x, _ := tensor.FromFloat32([]float32{float32(batch + 1), float32(batch + 2)}, []int64{1, 2}, tensor.WithDevice(testDevice))
+		input := autograd.NewVariable(x, false)
+
+		result := g.Forward(input)
+		if err := result.Err(); err != nil {
+			t.Fatalf("batch %d: forward: %v", batch, err)
+		}
+
+		loss := result.Sum()
+		opt.ZeroGrad()
+
+		// Force GC between operations to stress-test tensor lifecycle.
+		runtime.GC()
+
+		if err := loss.Backward(); err != nil {
+			t.Fatalf("batch %d: backward: %v", batch, err)
+		}
+
+		runtime.GC()
+		opt.Step()
+
+		runtime.GC()
+		g.DetachState()
+
+		runtime.GC()
+	}
+}
+
+// TestMultiBatchLoopWithGCStress combines Loop iteration, backward release,
+// optimizer step, and aggressive GC — the full stress pattern.
+func TestMultiBatchLoopWithGCStress(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
+	body, _ := nn.NewLinear(2, 2)
+
+	g, err := From(body).
+		Loop(body).For(3).
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.SetDevice(testDevice)
+
+	opt := nn.NewSGD(g.Parameters(), 0.01, 0)
+
+	for batch := range 10 {
+		x, _ := tensor.FromFloat32([]float32{float32(batch + 1), float32(batch + 2)}, []int64{1, 2}, tensor.WithDevice(testDevice))
+		input := autograd.NewVariable(x, false)
+
+		result := g.Forward(input)
+		if err := result.Err(); err != nil {
+			t.Fatalf("batch %d: forward: %v", batch, err)
+		}
+
+		loss := result.Sum()
+		opt.ZeroGrad()
+		runtime.GC()
+
+		if err := loss.Backward(); err != nil {
+			t.Fatalf("batch %d: backward: %v", batch, err)
+		}
+
+		runtime.GC()
+		opt.Step()
+		runtime.GC()
+		g.DetachState()
+		runtime.GC()
+	}
+}
+
+// TestMultiBatchForwardRefWithDevice exercises forward-ref state with
+// device placement — auto-move at ForwardCtx line 171 is the crash site.
+func TestMultiBatchForwardRefWithDevice(t *testing.T) {
+	entry, _ := nn.NewLinear(2, 2)
+	proj, _ := nn.NewLinear(2, 2)
+
+	g, err := From(entry).
+		Through(&nilSafeAdd{}).Using("state").
+		Through(proj).Tag("state").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// SetDevice enables the auto-move code path at ForwardCtx which is
+	// the crash site. With -tags cuda this runs on GPU.
+	g.SetDevice(testDevice)
+
+	runMultiBatchTraining(t, g, 10, []int64{1, 2}, true)
+}
+
+// runMultiBatchTraining is a shared helper for multi-batch training tests.
+// It runs nBatches of forward → backward → step → DetachState with optional
+// GC stress calls between operations. When built with -tags cuda, tensors
+// are created on GPU and the graph is moved to testDevice automatically.
+func runMultiBatchTraining(t *testing.T, g *Graph, nBatches int, inputShape []int64, gcStress bool) {
+	t.Helper()
+	skipIfDeviceUnavailable(t)
+
+	if testDevice != tensor.CPU {
+		g.SetDevice(testDevice)
+	}
+
+	opt := nn.NewSGD(g.Parameters(), 0.01, 0)
+
+	for batch := range nBatches {
+		x, err := tensor.Ones(inputShape, tensor.WithDevice(testDevice))
+		if err != nil {
+			t.Fatalf("batch %d: create input: %v", batch, err)
+		}
+		input := autograd.NewVariable(x, false)
+
+		result := g.Forward(input)
+		if err := result.Err(); err != nil {
+			t.Fatalf("batch %d: forward: %v", batch, err)
+		}
+
+		loss := result.Sum()
+		opt.ZeroGrad()
+		if gcStress {
+			runtime.GC()
+		}
+
+		if err := loss.Backward(); err != nil {
+			t.Fatalf("batch %d: backward: %v", batch, err)
+		}
+
+		if gcStress {
+			runtime.GC()
+		}
+		opt.Step()
+		if gcStress {
+			runtime.GC()
+		}
+		g.DetachState()
+		if gcStress {
+			runtime.GC()
+		}
+	}
+}
+
+// TestMultiBatchLarger uses bigger tensors to increase memory pressure.
+// With -tags cuda this is more likely to trigger the CUDA OOM → GC callback.
+func TestMultiBatchLarger(t *testing.T) {
+	entry, _ := nn.NewLinear(64, 64)
+	proj, _ := nn.NewLinear(64, 64)
+
+	g, err := From(entry).
+		Through(&nilSafeAdd{}).Using("state").
+		Through(proj).Tag("state").
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runMultiBatchTraining(t, g, 20, []int64{32, 64}, true)
+}
+
+// TestSetDeviceThenSetTraining reproduces a SIGSEGV found in fbrl:
+// SetDevice(CUDA) → SetTraining(true) → Forward crashes with use-after-free.
+// The theory is that SetTraining walks modules via WalkModules, and something
+// in that walk creates temporary Go objects that trigger GC finalization of
+// tensor wrappers. With BatchNorm (which has running stats), this path
+// exercises the DeviceMover interface.
+func TestSetDeviceThenSetTraining(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
+	// Build a graph with BatchNorm — key because it has non-parameter state
+	// (RunningMean, RunningVar) that SetTraining / DeviceMover touches.
+	// Use large layer sizes to increase VRAM pressure and trigger the
+	// CUDA OOM → GC callback path (the suspected crash site).
+	g, err := From(nn.MustLinear(256, 256)).
+		Through(mustBatchNorm(256)).
+		Through(nn.MustLinear(256, 128)).
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g.SetDevice(testDevice)
+	g.SetTraining(true)
+
+	// Forward + backward loop.
+	opt := nn.NewSGD(g.Parameters(), 0.01, 0)
+	for batch := range 20 {
+		x, err := tensor.Ones([]int64{64, 256}, tensor.WithDevice(testDevice))
+		if err != nil {
+			t.Fatalf("batch %d: create input: %v", batch, err)
+		}
+		input := autograd.NewVariable(x, false)
+
+		result := g.Forward(input)
+		if err := result.Err(); err != nil {
+			t.Fatalf("batch %d: forward: %v", batch, err)
+		}
+
+		loss := result.Sum()
+		opt.ZeroGrad()
+		if err := loss.Backward(); err != nil {
+			t.Fatalf("batch %d: backward: %v", batch, err)
+		}
+		opt.Step()
+		g.DetachState()
+	}
+}
+
+// TestSetDeviceThenSetTrainingGCStress is the same as TestSetDeviceThenSetTraining
+// but with runtime.GC() calls between operations to maximize the chance of
+// triggering the CUDA use-after-free.
+func TestSetDeviceThenSetTrainingGCStress(t *testing.T) {
+	skipIfDeviceUnavailable(t)
+
+	g, err := From(nn.MustLinear(256, 256)).
+		Through(mustBatchNorm(256)).
+		Through(nn.MustLinear(256, 128)).
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g.SetDevice(testDevice)
+	runtime.GC()
+	g.SetTraining(true)
+	runtime.GC()
+
+	opt := nn.NewSGD(g.Parameters(), 0.01, 0)
+	for batch := range 20 {
+		x, err := tensor.Ones([]int64{64, 256}, tensor.WithDevice(testDevice))
+		if err != nil {
+			t.Fatalf("batch %d: create input: %v", batch, err)
+		}
+		input := autograd.NewVariable(x, false)
+
+		runtime.GC()
+		result := g.Forward(input)
+		if err := result.Err(); err != nil {
+			t.Fatalf("batch %d: forward: %v", batch, err)
+		}
+
+		loss := result.Sum()
+		opt.ZeroGrad()
+		runtime.GC()
+		if err := loss.Backward(); err != nil {
+			t.Fatalf("batch %d: backward: %v", batch, err)
+		}
+		runtime.GC()
+		opt.Step()
+		g.DetachState()
 	}
 }

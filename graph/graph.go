@@ -165,6 +165,14 @@ func (g *Graph) ForwardCtx(ctx context.Context, inputs ...*autograd.Variable) *a
 			"graph: expected %d inputs, got %d", len(g.inputs), len(inputs)))
 	}
 
+	// Validate inputs before use — catches error variables (nil data)
+	// and use-after-release tensors (nil raw) early with a clear message.
+	for i, inp := range inputs {
+		if err := inp.Err(); err != nil {
+			return autograd.ErrVariable(fmt.Errorf("graph: input %d: %w", i, err))
+		}
+	}
+
 	// Auto-move inputs to graph device if configured.
 	if g.device != nil {
 		for i, inp := range inputs {
@@ -770,6 +778,11 @@ func buildGraph(nodes map[string]*Node, edges []*Edge, inputs, outputs []exposed
 
 		// Wire the state read node to return the buffer value.
 		nodes[fr.readerID].run = func(_ []*autograd.Variable) ([]*autograd.Variable, error) {
+			if entry.value != nil {
+				if err := entry.value.Err(); err != nil {
+					return nil, fmt.Errorf("graph: state %q: tensor released or invalid: %w", entry.name, err)
+				}
+			}
 			return []*autograd.Variable{entry.value}, nil
 		}
 	}

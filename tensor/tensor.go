@@ -44,6 +44,7 @@ func wrap(raw *libtorch.Tensor) *Tensor {
 	t := &Tensor{raw: raw, refs: 1}
 	activeTensors.Add(1)
 	runtime.SetFinalizer(t, (*Tensor).release)
+	libtorch.EnforceVRAMBudget()
 	return t
 }
 
@@ -280,7 +281,9 @@ func (t *Tensor) Shape() []int64 {
 	if !t.valid() {
 		return nil
 	}
-	return t.raw.Shapes()
+	s := t.raw.Shapes()
+	runtime.KeepAlive(t)
+	return s
 }
 
 // Ndim returns the number of dimensions.
@@ -288,7 +291,9 @@ func (t *Tensor) Ndim() int {
 	if !t.valid() {
 		return 0
 	}
-	return t.raw.Ndim()
+	n := t.raw.Ndim()
+	runtime.KeepAlive(t)
+	return n
 }
 
 // Numel returns the total number of elements.
@@ -296,7 +301,9 @@ func (t *Tensor) Numel() int64 {
 	if !t.valid() {
 		return 0
 	}
-	return t.raw.Numel()
+	n := t.raw.Numel()
+	runtime.KeepAlive(t)
+	return n
 }
 
 // DType returns the element type.
@@ -304,7 +311,9 @@ func (t *Tensor) DType() DType {
 	if !t.valid() {
 		return 0
 	}
-	return DType(t.raw.DType())
+	d := DType(t.raw.DType())
+	runtime.KeepAlive(t)
+	return d
 }
 
 // Device returns where the tensor lives (CPU or CUDA).
@@ -312,7 +321,9 @@ func (t *Tensor) Device() Device {
 	if !t.valid() {
 		return CPU
 	}
-	return Device(t.raw.Device())
+	d := Device(t.raw.Device())
+	runtime.KeepAlive(t)
+	return d
 }
 
 // --- Data access ---
@@ -323,7 +334,9 @@ func (t *Tensor) Float32Data() ([]float32, error) {
 	if err := t.Err(); err != nil {
 		return nil, err
 	}
-	return t.raw.Float32Data()
+	data, err := t.raw.Float32Data()
+	runtime.KeepAlive(t)
+	return data, err
 }
 
 // Float64Data copies the tensor data into a Go float64 slice.
@@ -331,7 +344,9 @@ func (t *Tensor) Float64Data() ([]float64, error) {
 	if err := t.Err(); err != nil {
 		return nil, err
 	}
-	return t.raw.Float64Data()
+	data, err := t.raw.Float64Data()
+	runtime.KeepAlive(t)
+	return data, err
 }
 
 // Int64Data copies the tensor data into a Go int64 slice.
@@ -340,7 +355,9 @@ func (t *Tensor) Int64Data() ([]int64, error) {
 	if err := t.Err(); err != nil {
 		return nil, err
 	}
-	return t.raw.Int64Data()
+	data, err := t.raw.Int64Data()
+	runtime.KeepAlive(t)
+	return data, err
 }
 
 // String returns a human-readable summary of the tensor.

@@ -11,7 +11,11 @@ import (
 // --- Creation and metadata ---
 
 func TestCreateZeros(t *testing.T) {
-	z, err := tensor.Zeros([]int64{2, 3})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	z, err := tensor.Zeros([]int64{2, 3}, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatalf("Zeros: %v", err)
 	}
@@ -29,8 +33,8 @@ func TestCreateZeros(t *testing.T) {
 	if z.DType() != tensor.Float32 {
 		t.Errorf("dtype = %s, want float32", z.DType())
 	}
-	if z.Device() != tensor.CPU {
-		t.Errorf("device = %s, want cpu", z.Device())
+	if z.Device() != testDevice {
+		t.Errorf("device = %s, want %s", z.Device(), testDevice)
 	}
 
 	data, err := z.Float32Data()
@@ -45,7 +49,11 @@ func TestCreateZeros(t *testing.T) {
 }
 
 func TestCreateWithOptions(t *testing.T) {
-	o, err := tensor.Ones([]int64{4}, tensor.WithDType(tensor.Float64))
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	o, err := tensor.Ones([]int64{4}, tensor.WithDType(tensor.Float64), tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatalf("Ones: %v", err)
 	}
@@ -67,8 +75,12 @@ func TestCreateWithOptions(t *testing.T) {
 }
 
 func TestFromFloat32(t *testing.T) {
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
 	data := []float32{1, 2, 3, 4, 5, 6}
-	x, err := tensor.FromFloat32(data, []int64{2, 3})
+	x, err := tensor.FromFloat32(data, []int64{2, 3}, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatalf("FromFloat32: %v", err)
 	}
@@ -86,21 +98,30 @@ func TestFromFloat32(t *testing.T) {
 }
 
 func TestString(t *testing.T) {
-	x, _ := tensor.Zeros([]int64{2, 3})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.Zeros([]int64{2, 3}, tensor.WithDevice(testDevice))
 	defer x.Release()
 
 	s := x.String()
-	if s != "Tensor(shape=[2 3], dtype=float32, device=cpu)" {
-		t.Errorf("String() = %q", s)
+	want := "Tensor(shape=[2 3], dtype=float32, device=" + testDevice.String() + ")"
+	if s != want {
+		t.Errorf("String() = %q, want %q", s, want)
 	}
 }
 
 // --- Chaining operations ---
 
 func TestChainedOps(t *testing.T) {
-	a, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	a, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	defer a.Release()
-	b, _ := tensor.FromFloat32([]float32{10, 20, 30}, []int64{3})
+	b, _ := tensor.FromFloat32([]float32{10, 20, 30}, []int64{3}, tensor.WithDevice(testDevice))
 	defer b.Release()
 
 	// Chain: add then relu
@@ -120,12 +141,16 @@ func TestChainedOps(t *testing.T) {
 }
 
 func TestChainedMatmul(t *testing.T) {
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
 	// Linear layer: y = ReLU(x @ W + b)
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3})
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3}, tensor.WithDevice(testDevice))
 	defer x.Release()
-	w, _ := tensor.FromFloat32([]float32{1, 0, 0, 1, 0, 0}, []int64{3, 2})
+	w, _ := tensor.FromFloat32([]float32{1, 0, 0, 1, 0, 0}, []int64{3, 2}, tensor.WithDevice(testDevice))
 	defer w.Release()
-	b, _ := tensor.FromFloat32([]float32{-5, 10}, []int64{1, 2})
+	b, _ := tensor.FromFloat32([]float32{-5, 10}, []int64{1, 2}, tensor.WithDevice(testDevice))
 	defer b.Release()
 
 	// x @ W = [1, 2] (first two elements of x, since W is a selector)
@@ -149,11 +174,15 @@ func TestChainedMatmul(t *testing.T) {
 // --- Error propagation ---
 
 func TestErrorPropagation(t *testing.T) {
-	a, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	a, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	defer a.Release()
 
 	// Release b, then try to use it — should propagate error
-	b, _ := tensor.FromFloat32([]float32{4, 5, 6}, []int64{3})
+	b, _ := tensor.FromFloat32([]float32{4, 5, 6}, []int64{3}, tensor.WithDevice(testDevice))
 	b.Release()
 
 	result := a.Add(b)
@@ -169,7 +198,11 @@ func TestErrorPropagation(t *testing.T) {
 }
 
 func TestErrorOnReleasedTensor(t *testing.T) {
-	a, _ := tensor.Zeros([]int64{3})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	a, _ := tensor.Zeros([]int64{3}, tensor.WithDevice(testDevice))
 	a.Release()
 
 	if a.Err() == nil {
@@ -186,7 +219,11 @@ func TestErrorOnReleasedTensor(t *testing.T) {
 // --- Activations ---
 
 func TestActivations(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{-2, -1, 0, 1, 2}, []int64{5})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32([]float32{-2, -1, 0, 1, 2}, []int64{5}, tensor.WithDevice(testDevice))
 	defer x.Release()
 
 	// Sigmoid: symmetric around 0.5
@@ -217,12 +254,16 @@ func TestActivations(t *testing.T) {
 // --- Scope ---
 
 func TestScope(t *testing.T) {
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
 	before := tensor.ActiveTensors()
 
 	scope := tensor.NewScope()
-	a, _ := tensor.Zeros([]int64{100, 100})
+	a, _ := tensor.Zeros([]int64{100, 100}, tensor.WithDevice(testDevice))
 	scope.Track(a)
-	b, _ := tensor.Ones([]int64{100, 100})
+	b, _ := tensor.Ones([]int64{100, 100}, tensor.WithDevice(testDevice))
 	scope.Track(b)
 	c := scope.Track(a.Add(b))
 
@@ -250,12 +291,16 @@ func TestScope(t *testing.T) {
 }
 
 func TestWithScope(t *testing.T) {
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
 	before := tensor.ActiveTensors()
 
 	result, err := tensor.WithScope(func(s *tensor.Scope) *tensor.Tensor {
-		a, _ := tensor.Zeros([]int64{3})
+		a, _ := tensor.Zeros([]int64{3}, tensor.WithDevice(testDevice))
 		s.Track(a)
-		b, _ := tensor.Ones([]int64{3})
+		b, _ := tensor.Ones([]int64{3}, tensor.WithDevice(testDevice))
 		s.Track(b)
 
 		// Return the result — it should survive scope closure
@@ -281,6 +326,10 @@ func TestWithScope(t *testing.T) {
 }
 
 func TestGCFinalizer(t *testing.T) {
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
 	// Force GC first to flush any pending finalizers from earlier tests
 	runtime.GC()
 	runtime.GC()
@@ -289,7 +338,7 @@ func TestGCFinalizer(t *testing.T) {
 
 	// Create a tensor and let it go out of scope — GC should finalize it
 	func() {
-		x, _ := tensor.Zeros([]int64{100, 100})
+		x, _ := tensor.Zeros([]int64{100, 100}, tensor.WithDevice(testDevice))
 		_ = x // goes out of scope
 	}()
 
@@ -304,41 +353,41 @@ func TestGCFinalizer(t *testing.T) {
 	}
 }
 
-// --- CUDA ---
+// --- Device placement ---
 
-func TestCUDADevice(t *testing.T) {
-	if !tensor.CUDAAvailable() {
-		t.Skip("CUDA not available")
+func TestDevicePlacement(t *testing.T) {
+	if deviceUnavailable() {
+		t.Skip("device not available")
 	}
 
-	x, err := tensor.Zeros([]int64{3, 3}, tensor.WithDevice(tensor.CUDA))
+	x, err := tensor.Zeros([]int64{3, 3}, tensor.WithDevice(testDevice))
 	if err != nil {
-		t.Fatalf("Zeros CUDA: %v", err)
+		t.Fatalf("Zeros: %v", err)
 	}
 	defer x.Release()
 
-	if x.Device() != tensor.CUDA {
-		t.Errorf("device = %s, want cuda", x.Device())
+	if x.Device() != testDevice {
+		t.Errorf("device = %s, want %s", x.Device(), testDevice)
 	}
 }
 
-func TestCUDAChain(t *testing.T) {
-	if !tensor.CUDAAvailable() {
-		t.Skip("CUDA not available")
+func TestChainOnDevice(t *testing.T) {
+	if deviceUnavailable() {
+		t.Skip("device not available")
 	}
 
 	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{2, 2},
-		tensor.WithDevice(tensor.CUDA))
+		tensor.WithDevice(testDevice))
 	defer x.Release()
 
 	w, _ := tensor.FromFloat32([]float32{1, 0, 0, 1}, []int64{2, 2},
-		tensor.WithDevice(tensor.CUDA))
+		tensor.WithDevice(testDevice))
 	defer w.Release()
 
-	// Identity matmul → relu on GPU, then read back
+	// Identity matmul → relu on device, then read back
 	result := x.Matmul(w).ReLU()
 	if err := result.Err(); err != nil {
-		t.Skipf("CUDA chain not supported on this GPU: %v", err)
+		t.Fatalf("chain error: %v", err)
 	}
 	defer result.Release()
 
@@ -355,7 +404,11 @@ func TestCUDAChain(t *testing.T) {
 }
 
 func TestOneHot(t *testing.T) {
-	idx, _ := tensor.FromInt64([]int64{0, 2, 1}, []int64{3})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	idx, _ := tensor.FromInt64([]int64{0, 2, 1}, []int64{3}, tensor.WithDevice(testDevice))
 	oh := tensor.OneHot(idx, 4, 0)
 	if err := oh.Err(); err != nil {
 		t.Fatalf("OneHot: %v", err)
@@ -378,7 +431,11 @@ func TestOneHot(t *testing.T) {
 }
 
 func TestEye(t *testing.T) {
-	eye, err := tensor.Eye(3)
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	eye, err := tensor.Eye(3, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatalf("Eye: %v", err)
 	}
@@ -392,7 +449,11 @@ func TestEye(t *testing.T) {
 }
 
 func TestInt64Data(t *testing.T) {
-	x, _ := tensor.FromInt64([]int64{10, 20, 30}, []int64{3})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromInt64([]int64{10, 20, 30}, []int64{3}, tensor.WithDevice(testDevice))
 	got, err := x.Int64Data()
 	if err != nil {
 		t.Fatalf("Int64Data: %v", err)
@@ -406,7 +467,11 @@ func TestInt64Data(t *testing.T) {
 }
 
 func TestAbs(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{-3, 2, -1, 0}, []int64{4})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32([]float32{-3, 2, -1, 0}, []int64{4}, tensor.WithDevice(testDevice))
 	got, _ := x.Abs().Float32Data()
 	want := []float32{3, 2, 1, 0}
 	for i, v := range want {
@@ -417,7 +482,11 @@ func TestAbs(t *testing.T) {
 }
 
 func TestPow(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{2, 3, 4}, []int64{3})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32([]float32{2, 3, 4}, []int64{3}, tensor.WithDevice(testDevice))
 	got, _ := x.Pow(2).Float32Data()
 	want := []float32{4, 9, 16}
 	for i, v := range want {
@@ -428,7 +497,11 @@ func TestPow(t *testing.T) {
 }
 
 func TestClamp(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{-5, 0, 3, 10}, []int64{4})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32([]float32{-5, 0, 3, 10}, []int64{4}, tensor.WithDevice(testDevice))
 	got, _ := x.Clamp(-1, 5).Float32Data()
 	want := []float32{-1, 0, 3, 5}
 	for i, v := range want {
@@ -439,7 +512,11 @@ func TestClamp(t *testing.T) {
 }
 
 func TestArange(t *testing.T) {
-	a, err := tensor.Arange(0, 5, 1)
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	a, err := tensor.Arange(0, 5, 1, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatalf("Arange: %v", err)
 	}
@@ -453,7 +530,11 @@ func TestArange(t *testing.T) {
 }
 
 func TestArangeEnd(t *testing.T) {
-	a, err := tensor.ArangeEnd(3)
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	a, err := tensor.ArangeEnd(3, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatalf("ArangeEnd: %v", err)
 	}
@@ -464,7 +545,11 @@ func TestArangeEnd(t *testing.T) {
 }
 
 func TestFull(t *testing.T) {
-	f, err := tensor.Full([]int64{2, 3}, 7.0)
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	f, err := tensor.Full([]int64{2, 3}, 7.0, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatalf("Full: %v", err)
 	}
@@ -477,7 +562,11 @@ func TestFull(t *testing.T) {
 }
 
 func TestSqueeze(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3, 1})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{1, 3, 1}, tensor.WithDevice(testDevice))
 	s := x.Squeeze(0)
 	if shape := s.Shape(); len(shape) != 2 || shape[0] != 3 || shape[1] != 1 {
 		t.Errorf("Squeeze(0) shape = %v, want [3 1]", shape)
@@ -494,7 +583,11 @@ func TestSqueeze(t *testing.T) {
 }
 
 func TestUnsqueeze(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3}, []int64{3}, tensor.WithDevice(testDevice))
 	u := x.Unsqueeze(0)
 	if shape := u.Shape(); len(shape) != 2 || shape[0] != 1 || shape[1] != 3 {
 		t.Errorf("Unsqueeze(0) shape = %v, want [1 3]", shape)
@@ -506,7 +599,11 @@ func TestUnsqueeze(t *testing.T) {
 }
 
 func TestFlatten(t *testing.T) {
-	x, _ := tensor.FromFloat32(make([]float32, 24), []int64{2, 3, 4})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32(make([]float32, 24), []int64{2, 3, 4}, tensor.WithDevice(testDevice))
 	f := x.Flatten(1)
 	if shape := f.Shape(); len(shape) != 2 || shape[0] != 2 || shape[1] != 12 {
 		t.Errorf("Flatten(1) shape = %v, want [2 12]", shape)
@@ -518,7 +615,11 @@ func TestFlatten(t *testing.T) {
 }
 
 func TestPermute(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{1, 2, 3})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4, 5, 6}, []int64{1, 2, 3}, tensor.WithDevice(testDevice))
 	p := x.Permute(0, 2, 1)
 	if shape := p.Shape(); shape[0] != 1 || shape[1] != 3 || shape[2] != 2 {
 		t.Errorf("Permute shape = %v, want [1 3 2]", shape)
@@ -526,7 +627,11 @@ func TestPermute(t *testing.T) {
 }
 
 func TestDivScalar(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{10, 20, 30}, []int64{3})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32([]float32{10, 20, 30}, []int64{3}, tensor.WithDevice(testDevice))
 	got, _ := x.DivScalar(10).Float32Data()
 	want := []float32{1, 2, 3}
 	for i, v := range want {
@@ -537,7 +642,11 @@ func TestDivScalar(t *testing.T) {
 }
 
 func TestMean(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{4})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 2, 3, 4}, []int64{4}, tensor.WithDevice(testDevice))
 	got, _ := x.Mean().Float32Data()
 	if math.Abs(float64(got[0])-2.5) > 1e-5 {
 		t.Errorf("Mean = %f, want 2.5", got[0])
@@ -545,7 +654,11 @@ func TestMean(t *testing.T) {
 }
 
 func TestMin(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{3, 1, 4, 1, 5}, []int64{5})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32([]float32{3, 1, 4, 1, 5}, []int64{5}, tensor.WithDevice(testDevice))
 	got, _ := x.Min().Float32Data()
 	if got[0] != 1 {
 		t.Errorf("Min = %f, want 1", got[0])
@@ -553,7 +666,11 @@ func TestMin(t *testing.T) {
 }
 
 func TestMinDim(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{3, 1, 4, 2}, []int64{2, 2})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32([]float32{3, 1, 4, 2}, []int64{2, 2}, tensor.WithDevice(testDevice))
 	got, _ := x.MinDim(1, false).Float32Data()
 	want := []float32{1, 2}
 	for i, v := range want {
@@ -564,7 +681,11 @@ func TestMinDim(t *testing.T) {
 }
 
 func TestArgMax(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{1, 5, 3, 7, 2, 4}, []int64{2, 3})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32([]float32{1, 5, 3, 7, 2, 4}, []int64{2, 3}, tensor.WithDevice(testDevice))
 	got, _ := x.ArgMax(1, false).Int64Data()
 	want := []int64{1, 0}
 	for i, v := range want {
@@ -575,9 +696,13 @@ func TestArgMax(t *testing.T) {
 }
 
 func TestWhere(t *testing.T) {
-	cond, _ := tensor.FromFloat32([]float32{1, 0, 1, 0}, []int64{4})
-	x, _ := tensor.FromFloat32([]float32{10, 20, 30, 40}, []int64{4})
-	y, _ := tensor.FromFloat32([]float32{-1, -2, -3, -4}, []int64{4})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	cond, _ := tensor.FromFloat32([]float32{1, 0, 1, 0}, []int64{4}, tensor.WithDevice(testDevice))
+	x, _ := tensor.FromFloat32([]float32{10, 20, 30, 40}, []int64{4}, tensor.WithDevice(testDevice))
+	y, _ := tensor.FromFloat32([]float32{-1, -2, -3, -4}, []int64{4}, tensor.WithDevice(testDevice))
 	got, _ := cond.Where(x, y).Float32Data()
 	want := []float32{10, -2, 30, -4}
 	for i, v := range want {
@@ -588,9 +713,13 @@ func TestWhere(t *testing.T) {
 }
 
 func TestCatAll(t *testing.T) {
-	a, _ := tensor.FromFloat32([]float32{1, 2}, []int64{2})
-	b, _ := tensor.FromFloat32([]float32{3, 4}, []int64{2})
-	c, _ := tensor.FromFloat32([]float32{5, 6}, []int64{2})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	a, _ := tensor.FromFloat32([]float32{1, 2}, []int64{2}, tensor.WithDevice(testDevice))
+	b, _ := tensor.FromFloat32([]float32{3, 4}, []int64{2}, tensor.WithDevice(testDevice))
+	c, _ := tensor.FromFloat32([]float32{5, 6}, []int64{2}, tensor.WithDevice(testDevice))
 	got, _ := tensor.CatAll([]*tensor.Tensor{a, b, c}, 0).Float32Data()
 	want := []float32{1, 2, 3, 4, 5, 6}
 	for i, v := range want {
@@ -601,7 +730,11 @@ func TestCatAll(t *testing.T) {
 }
 
 func TestComparisonOps(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{-2, -1, 0, 1, 2}, []int64{5})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32([]float32{-2, -1, 0, 1, 2}, []int64{5}, tensor.WithDevice(testDevice))
 
 	ge, _ := x.GEScalar(0).Float32Data()
 	wantGE := []float32{0, 0, 1, 1, 1}
@@ -629,7 +762,11 @@ func TestComparisonOps(t *testing.T) {
 }
 
 func TestDTypeCastConvenience(t *testing.T) {
-	x, _ := tensor.FromFloat32([]float32{0.1, 0.9, 0.3, 0.8}, []int64{4})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, _ := tensor.FromFloat32([]float32{0.1, 0.9, 0.3, 0.8}, []int64{4}, tensor.WithDevice(testDevice))
 
 	// GTScalar returns float mask, ToInt64 converts to int indices.
 	mask := x.GTScalar(0.5).ToInt64()
@@ -656,22 +793,22 @@ func TestDTypeCastConvenience(t *testing.T) {
 }
 
 func TestToDeviceChain(t *testing.T) {
-	if !tensor.CUDAAvailable() {
-		t.Skip("CUDA not available")
+	if deviceUnavailable() {
+		t.Skip("device not available")
 	}
 
-	// Create on CPU, move to CUDA, operate, move back
-	x, _ := tensor.FromFloat32([]float32{-1, 2, -3, 4}, []int64{4})
+	// Create on testDevice, move to CPU, operate, move back to testDevice
+	x, _ := tensor.FromFloat32([]float32{-1, 2, -3, 4}, []int64{4}, tensor.WithDevice(testDevice))
 	defer x.Release()
 
-	result := x.ToCUDA().ReLU().ToCPU()
+	result := x.ToCPU().ReLU().ToDevice(testDevice)
 	if err := result.Err(); err != nil {
 		t.Fatalf("chain error: %v", err)
 	}
 	defer result.Release()
 
-	if result.Device() != tensor.CPU {
-		t.Errorf("device = %s, want cpu", result.Device())
+	if result.Device() != testDevice {
+		t.Errorf("device = %s, want %s", result.Device(), testDevice)
 	}
 
 	got, _ := result.Float32Data()
@@ -684,7 +821,11 @@ func TestToDeviceChain(t *testing.T) {
 }
 
 func TestRetainRelease(t *testing.T) {
-	x, err := tensor.Zeros([]int64{3, 3})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, err := tensor.Zeros([]int64{3, 3}, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatalf("Zeros: %v", err)
 	}
@@ -712,7 +853,11 @@ func TestRetainRelease(t *testing.T) {
 }
 
 func TestRetainMultiple(t *testing.T) {
-	x, err := tensor.Ones([]int64{2, 2})
+	if deviceUnavailable() {
+		t.Skip("device not available")
+	}
+
+	x, err := tensor.Ones([]int64{2, 2}, tensor.WithDevice(testDevice))
 	if err != nil {
 		t.Fatalf("Ones: %v", err)
 	}

@@ -5,9 +5,17 @@ All notable changes to goDl will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [v0.2.0] - 2026-03-13
+
+> **Project status:** goDl is no longer actively developed. Go's garbage collector
+> cannot deterministically manage GPU (VRAM) memory, which creates fundamental
+> limitations for training workloads. The project has been succeeded by
+> **[floDl](https://github.com/fab2s/floDl)**, a Rust port where `Drop` provides
+> deterministic resource management. goDl remains available as-is under MIT license.
 
 ### Added
+- **autograd.Scope**: deterministic batch-level tensor cleanup without `runtime.GC()`. `NewScope()` tracks all intermediate Variables created by autograd ops; `Close()` releases their C++ tensors immediately. Leaf parameters and user-created Variables (via `NewVariable`) are not tracked — only op results. Eliminates GC-induced GPU pipeline stalls in training loops. Thread-safe for parallel graph execution.
+- **VRAM-aware automatic memory management**: proactive GC trigger based on physical VRAM usage. The C++ shim tracks allocated CUDA bytes via an atomic counter (piggybacked on existing tensor creation/destruction, zero extra CGo roundtrips). Every 100 tensor creations, Go reads the counter and triggers `runtime.GC()` if allocated CUDA bytes exceed 90% of physical VRAM. This prevents modern NVIDIA drivers from silently spilling to system RAM. Three layers of defense: (1) proactive GC at 90% VRAM, (2) hard allocator cap at 95% via `SetMemoryFraction`, (3) existing OOM callback as last resort. Override the budget via `GODL_VRAM_BUDGET` environment variable (e.g. `"0.80"`).
 - **Record**: inject external metrics (losses, hit rates) into the Collect/Flush pipeline.
 - **Trend.Latest**: convenience accessor for the most recent epoch value.
 - **Flush timing**: ETA, Elapsed, FlushCount, LastFlushDuration — built-in wall-clock tracking.
@@ -33,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - **Deterministic VRAM release**: saved-for-backward tensors are now freed during backward via Go-side atomic reference counting — no `runtime.GC()` calls needed in training loops. `Tensor.Retain()` / `Release()` manage the lifecycle; the engine releases saved tensors immediately after each op's backward pass, old gradient accumulators on replacement, and stale leaf gradients on accumulation. All 23 tensor-saving ops covered. See `docs/design/memory-management.md`.
 - **CUDA OOM → GC callback**: when the CUDA caching allocator exhausts its free-block pool, a registered `FreeMemoryCallback` triggers Go's garbage collector to finalize unreachable forward-intermediate tensors. A pending-free queue prevents deadlock with the allocator's recursive mutex. Zero cost in the happy path — fires only under VRAM pressure. See `docs/design/memory-management.md`.
+- **CUDA use-after-free in GC callback**: the OOM callback previously drained pending tensor frees on the same call stack as the CGo operation that triggered the allocation — freeing C++ handles that libtorch was still using. Manifested as SIGSEGV with varying symptoms (corrupted vtable, "tensor does not have a device", TLS assertion failures) under VRAM pressure. Fixed by deferring the drain to the next `Free()` call outside the callback and adding `runtime.KeepAlive` to all ~50 CGo call sites in `tensor/` to prevent premature GC of tensor wrappers.
+- **Device-aware checkpoint and optimizer state loading**: `LoadParameters`, `SGD.LoadState`, and `Adam.LoadState` now move deserialized tensors to the device of the corresponding parameter. Previously, loaded tensors were always CPU, causing device mismatch errors when resuming training on CUDA.
 - **Backward memory retention**: the autograd engine now releases the computation graph during backward — `gradFn`, captured tensors, and intermediate forward results are nil'd out as each node is processed. Previously the entire graph stayed alive until the GC collected the user's loss variable, causing VRAM accumulation across training steps. See `docs/design/memory-management.md`.
 - **DetachState memory growth**: `DetachState` is now recursive — walks sub-graphs via `WalkModules` and calls `Detach()` on all `Detachable` modules and nested graphs. Previously only detached the graph's own forward-reference state buffers.
 - **Module device mismatch**: GRUCell, LSTMCell, and Dropout now create internal tensors (zero hidden states, dropout masks) on the same device and dtype as the input. Previously these defaulted to CPU, causing device mismatch errors after `SetDevice(CUDA)`.
@@ -41,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **ClipGradValue device**: `nn.ClipGradValue` now preserves the gradient's device when clamping. Previously could produce CPU gradients from CUDA parameters.
 - **BatchNorm lazy device alignment**: `BatchNorm.Forward` moves running statistics to match the input device if they differ, preventing device mismatch when BatchNorm is nested inside user-defined composite modules that aren't direct graph nodes.
 - **ETA calculation**: training start is now recorded on first Forward (not first Flush), so epoch 0's duration is included in the per-epoch average. ETA is available after 1 flush instead of requiring 2. `Elapsed()` and `WriteLog` updated consistently.
+- **CPU-only build**: `godl_cuda_is_available` and `godl_cuda_device_count` now compile correctly without CUDA headers (guarded by `GODL_BUILD_CUDA`).
+
+### Testing
+- 482 tests, all passing with race detector (up from 460 in v0.1.0).
 
 ## [v0.1.0] - 2026-03-07
 
@@ -95,5 +109,5 @@ Initial public release.
 - Docker-based builds: CUDA image and CPU-only image (~2GB vs ~21GB).
 - GitHub Actions CI with CPU Docker image.
 
-[Unreleased]: https://github.com/fab2s/goDl/compare/v0.1.0...HEAD
+[v0.2.0]: https://github.com/fab2s/goDl/compare/v0.1.0...v0.2.0
 [v0.1.0]: https://github.com/fab2s/goDl/releases/tag/v0.1.0
